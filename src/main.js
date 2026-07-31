@@ -242,6 +242,18 @@ ipcMain.handle('auth:unlock', (event, password) => {
   return { token: createToken(), config: publicConfig() };
 });
 
+ipcMain.handle('auth:changePassword', (event, token, oldPassword, newPassword) => {
+  requireToken(token);
+  if (!config.password) throw new Error('No feature password is set.');
+  if (!verifyPassword(oldPassword)) throw new Error('Current password is incorrect.');
+  if (typeof newPassword !== 'string' || newPassword.length < 4) {
+    throw new Error('Use at least 4 characters for the new password.');
+  }
+  config.password = hashPassword(newPassword);
+  writeConfig();
+  return { config: publicConfig() };
+});
+
 ipcMain.handle('auth:lock', (event, token) => {
   authTokens.delete(token);
   return true;
