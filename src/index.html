@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-src *;" />
+  <title>Arena Study Browser</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="shell sidebar-hidden">
+    <aside class="sidebar" aria-label="Study tools">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">A</div>
+        <div>
+          <h1>Study Browser</h1>
+          <p>Focused allowlist mode</p>
+        </div>
+      </div>
+
+      <section class="panel timer-panel" aria-label="Focus timer">
+        <div class="panel-title-row">
+          <h2>Focus timer</h2>
+          <span id="timerMode" class="pill">Focus</span>
+        </div>
+        <div id="timerDisplay" class="timer-display">25:00</div>
+        <div class="timer-actions">
+          <button id="timerStart" class="secondary">Start</button>
+          <button id="timerPause" class="secondary">Pause</button>
+          <button id="timerReset" class="secondary">Reset</button>
+        </div>
+        <div class="timer-actions small-actions">
+          <button id="focus25" class="ghost">25 min</button>
+          <button id="break5" class="ghost">5 min</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Allowed websites">
+        <div class="panel-title-row">
+          <h2>Allowed only</h2>
+          <button id="manageSites" class="tiny">Manage</button>
+        </div>
+        <div id="siteList" class="site-list"></div>
+      </section>
+
+      <section class="panel notes-panel" aria-label="Study notes">
+        <div class="panel-title-row">
+          <h2>Quick notes</h2>
+          <button id="clearNotes" class="tiny danger-text">Clear</button>
+        </div>
+        <textarea id="notes" spellcheck="true" placeholder="Write study notes here. Saved locally."></textarea>
+      </section>
+    </aside>
+
+    <main class="browser">
+      <nav class="toolbar" aria-label="Browser toolbar">
+        <button id="sidebarToggle" class="nav-btn sidebar-toggle" title="Toggle sidebar">☰</button>
+        <button id="backBtn" class="nav-btn" title="Back">←</button>
+        <button id="forwardBtn" class="nav-btn" title="Forward">→</button>
+        <button id="reloadBtn" class="nav-btn" title="Reload">↻</button>
+        <button id="homeBtn" class="nav-btn" title="Home">⌂</button>
+        <form id="addressForm" class="address-form">
+          <input id="addressInput" type="text" autocomplete="off" spellcheck="false" placeholder="Enter an allowed study URL" />
+          <button class="go-btn" type="submit">Go</button>
+        </form>
+        <div id="statusPill" class="status-pill">Ready</div>
+      </nav>
+
+      <div id="contentArea" class="content-area">
+        <div id="homeScreen" class="home-screen">
+          <div class="hero-card">
+            <div class="hero-badge">No extensions · Strict allowlist · Password protected</div>
+            <h2>Stay on study websites only.</h2>
+            <p>
+              This browser blocks every HTTP/HTTPS domain except your allowed study list.
+              Add or remove websites only with the feature password.
+            </p>
+            <div id="quickLinks" class="quick-links"></div>
+          </div>
+        </div>
+        <div id="blockedScreen" class="blocked-screen hidden">
+          <div class="blocked-card">
+            <div class="blocked-icon">⛔</div>
+            <h2>Website blocked</h2>
+            <p id="blockedMessage">This website is not on the study allowlist.</p>
+            <div class="blocked-actions">
+              <button id="backToHome" class="primary">Back to study home</button>
+              <button id="openManagerFromBlocked" class="secondary">Manage allowlist</button>
+            </div>
+          </div>
+        </div>
+        <webview id="webview" class="webview hidden" partition="persist:study" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
+      </div>
+    </main>
+  </div>
+
+  <div id="modalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="modalTitle">Manage allowed websites</h2>
+          <p id="modalSubtitle">Unlock with the feature password to edit the study list.</p>
+        </div>
+        <button id="closeModal" class="icon-btn" aria-label="Close">×</button>
+      </div>
+
+      <div id="passwordSetup" class="modal-section hidden">
+        <label for="newPassword">Create feature password</label>
+        <input id="newPassword" type="password" placeholder="At least 4 characters" />
+        <label for="confirmPassword">Confirm password</label>
+        <input id="confirmPassword" type="password" placeholder="Repeat password" />
+        <button id="createPassword" class="primary full">Create password and unlock</button>
+      </div>
+
+      <div id="unlockSection" class="modal-section hidden">
+        <label for="passwordInput">Feature password</label>
+        <input id="passwordInput" type="password" placeholder="Enter password" />
+        <button id="unlockButton" class="primary full">Unlock site manager</button>
+      </div>
+
+      <div id="managerSection" class="modal-section hidden">
+        <div class="add-row">
+          <input id="siteInput" type="text" placeholder="example.com" />
+          <button id="addSite" class="primary">Add</button>
+        </div>
+        <p class="hint">Subdomains are allowed automatically. Example: allowing github.com also allows gist.github.com.</p>
+        <div id="managerList" class="manager-list"></div>
+        <button id="lockManager" class="secondary full">Lock manager</button>
+      </div>
+
+      <p id="modalError" class="modal-error" role="alert"></p>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

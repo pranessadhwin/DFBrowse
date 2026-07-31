@@ -1,0 +1,41 @@
+{
+  "name": "arena-study-browser",
+  "version": "1.0.0",
+  "description": "A password-managed allowlist browser for focused studying.",
+  "main": "src/main.js",
+  "author": "Arena.ai",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test:policy": "node test/policy.test.js",
+    "build:dir": "electron-builder --dir",
+    "build": "electron-builder"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "ai.arena.studybrowser",
+    "productName": "Arena Study Browser",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.education"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Education"
+    }
+  }
+}
