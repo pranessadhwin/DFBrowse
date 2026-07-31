@@ -125,6 +125,27 @@
         </div>
         <p class="hint">Subdomains are allowed automatically. Example: allowing github.com also allows gist.github.com.</p>
         <div id="managerList" class="manager-list"></div>
+
+        <div class="password-section">
+          <div class="password-section-header">
+            <h3>Change password</h3>
+            <button id="toggleChangePassword" class="ghost tiny">Change</button>
+          </div>
+          <div id="changePasswordForm" class="change-password-form hidden">
+            <label for="currentPassword">Current password</label>
+            <input id="currentPassword" type="password" placeholder="Enter current password" />
+            <label for="changeNewPassword">New password</label>
+            <input id="changeNewPassword" type="password" placeholder="At least 4 characters" />
+            <label for="changeConfirmPassword">Confirm new password</label>
+            <input id="changeConfirmPassword" type="password" placeholder="Repeat new password" />
+            <div class="change-password-actions">
+              <button id="submitChangePassword" class="primary">Update password</button>
+              <button id="cancelChangePassword" class="secondary">Cancel</button>
+            </div>
+            <p id="changePasswordMessage" class="change-password-msg" role="status"></p>
+          </div>
+        </div>
+
         <button id="lockManager" class="secondary full">Lock manager</button>
       </div>
 

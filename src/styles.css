@@ -595,6 +595,59 @@ button {
   font-weight: 700;
 }
 
+.password-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.password-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.password-section-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #cbd5e1;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.change-password-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.change-password-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.change-password-actions button {
+  flex: 1;
+  min-height: 40px;
+}
+
+.change-password-msg {
+  min-height: 18px;
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.change-password-msg.success {
+  color: #bbf7d0;
+}
+
+.change-password-msg.error {
+  color: #fecdd3;
+}
+
 @media (max-width: 1020px) {
   .shell {
     grid-template-columns: 270px 1fr;

@@ -49,6 +49,14 @@ const els = {
   addSite: $('#addSite'),
   managerList: $('#managerList'),
   lockManager: $('#lockManager'),
+  toggleChangePassword: $('#toggleChangePassword'),
+  changePasswordForm: $('#changePasswordForm'),
+  currentPassword: $('#currentPassword'),
+  changeNewPassword: $('#changeNewPassword'),
+  changeConfirmPassword: $('#changeConfirmPassword'),
+  submitChangePassword: $('#submitChangePassword'),
+  cancelChangePassword: $('#cancelChangePassword'),
+  changePasswordMessage: $('#changePasswordMessage'),
   timerDisplay: $('#timerDisplay'),
   timerMode: $('#timerMode'),
   timerStart: $('#timerStart'),
@@ -277,6 +285,7 @@ function openModal() {
 function closeModal() {
   hide(els.modalBackdrop);
   els.modalError.textContent = '';
+  resetChangePasswordForm();
 }
 
 function showManager() {
@@ -286,7 +295,18 @@ function showManager() {
   hide(els.unlockSection);
   show(els.managerSection);
   renderManagerList();
+  resetChangePasswordForm();
   els.siteInput.focus();
+}
+
+function resetChangePasswordForm() {
+  hide(els.changePasswordForm);
+  els.currentPassword.value = '';
+  els.changeNewPassword.value = '';
+  els.changeConfirmPassword.value = '';
+  els.changePasswordMessage.textContent = '';
+  els.changePasswordMessage.className = 'change-password-msg';
+  if (els.toggleChangePassword) els.toggleChangePassword.textContent = 'Change';
 }
 
 async function refreshConfig(nextConfig) {
@@ -428,6 +448,58 @@ function bindEvents() {
     if (state.token) await window.studyBrowser.lock(state.token);
     state.token = null;
     closeModal();
+  });
+
+  els.toggleChangePassword.addEventListener('click', () => {
+    if (els.changePasswordForm.classList.contains('hidden')) {
+      show(els.changePasswordForm);
+      els.toggleChangePassword.textContent = 'Hide';
+      els.currentPassword.focus();
+    } else {
+      resetChangePasswordForm();
+    }
+  });
+
+  els.cancelChangePassword.addEventListener('click', () => {
+    resetChangePasswordForm();
+  });
+
+  els.submitChangePassword.addEventListener('click', async () => {
+    const oldPw = els.currentPassword.value;
+    const newPw = els.changeNewPassword.value;
+    const confirmPw = els.changeConfirmPassword.value;
+
+    els.changePasswordMessage.textContent = '';
+    els.changePasswordMessage.className = 'change-password-msg';
+
+    if (!oldPw) {
+      els.changePasswordMessage.textContent = 'Enter your current password.';
+      els.changePasswordMessage.classList.add('error');
+      return;
+    }
+    if (newPw.length < 4) {
+      els.changePasswordMessage.textContent = 'New password must be at least 4 characters.';
+      els.changePasswordMessage.classList.add('error');
+      return;
+    }
+    if (newPw !== confirmPw) {
+      els.changePasswordMessage.textContent = 'New passwords do not match.';
+      els.changePasswordMessage.classList.add('error');
+      return;
+    }
+
+    try {
+      const result = await window.studyBrowser.changePassword(state.token, oldPw, newPw);
+      await refreshConfig(result.config);
+      els.changePasswordMessage.textContent = 'Password updated successfully!';
+      els.changePasswordMessage.classList.add('success');
+      els.currentPassword.value = '';
+      els.changeNewPassword.value = '';
+      els.changeConfirmPassword.value = '';
+    } catch (error) {
+      els.changePasswordMessage.textContent = error.message || String(error);
+      els.changePasswordMessage.classList.add('error');
+    }
   });
 
   els.modalBackdrop.addEventListener('click', event => {
