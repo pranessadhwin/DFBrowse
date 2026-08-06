@@ -648,6 +648,53 @@ button {
   color: #fecdd3;
 }
 
+/* Default-browser banner (shown on Windows when DFBrowse is not the default
+   web browser yet). */
+.default-browser-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 18px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.28), rgba(87, 166, 255, 0.1));
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.default-browser-banner.hidden {
+  display: none;
+}
+
+.banner-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.banner-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 12px var(--blue);
+  flex-shrink: 0;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.banner-actions .primary,
+.banner-actions .ghost {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 12.5px;
+}
+
 @media (max-width: 1020px) {
   .shell {
     grid-template-columns: 270px 1fr;

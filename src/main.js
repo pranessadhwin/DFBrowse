@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -21,13 +21,54 @@ app.commandLine.appendSwitch('disable-features', 'UserAgentClientHint,ReduceUser
 
 const STUDY_PARTITION = 'persist:study';
 const TOKEN_TTL_MS = 15 * 60 * 1000;
+// Matches the "appId" used by electron-builder so Windows groups the taskbar
+// icon, notifications, and default-browser registration under one identity.
+const APP_ID = 'com.dfbrowse.app';
 
 let config;
 let configPath;
 const authTokens = new Map();
 
+// URL handed to the OS (e.g. a clicked link) that still needs to be routed to
+// the renderer once the shell window has finished loading.
+let pendingExternalUrl = null;
+
 function now() {
   return Date.now();
+}
+
+function extractUrlFromArgs(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const arg of argv) {
+    if (typeof arg !== 'string') continue;
+    const trimmed = arg.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  }
+  return null;
+}
+
+function focusMainWindow() {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+// Route an externally-opened URL (link click, command line) into the webview.
+function routeExternalUrl(url) {
+  if (!url) return;
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win || !win.webContents || win.webContents.isDestroyed()) {
+    pendingExternalUrl = url;
+    return;
+  }
+  const shellReady = win.webContents.getURL().startsWith('file://') && !win.webContents.isLoadingMainFrame();
+  if (!shellReady) {
+    pendingExternalUrl = url;
+    return;
+  }
+  win.webContents.send('app:openUrl', url);
 }
 
 function getConfigPath() {
@@ -168,7 +209,7 @@ function createWindow() {
     height: 860,
     minWidth: 980,
     minHeight: 650,
-    title: 'Arena Study Browser',
+    title: 'DFBrowse',
     backgroundColor: '#09111f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -181,6 +222,16 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'index.html'));
 
+  // Flush any URL the OS handed us (clicked link, command line) once the
+  // shell has loaded and the renderer is listening for it.
+  win.webContents.on('did-finish-load', () => {
+    if (pendingExternalUrl) {
+      const url = pendingExternalUrl;
+      pendingExternalUrl = null;
+      win.webContents.send('app:openUrl', url);
+    }
+  });
+
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   win.webContents.on('will-navigate', (event, targetUrl) => {
@@ -190,15 +241,45 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  config = readConfig();
-  registerStudySessionGuards();
-  createWindow();
+const gotTheLock = app.requestSingleInstanceLock();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+if (!gotTheLock) {
+  // Another DFBrowse instance is already running — that instance will
+  // receive the clicked URL through the 'second-instance' event.
+  app.quit();
+} else {
+  // Windows launches a fresh process for every clicked link. Forward the URL
+  // to the already-running instance and focus its window instead.
+  app.on('second-instance', (event, commandLine) => {
+    focusMainWindow();
+    const url = extractUrlFromArgs(commandLine);
+    if (url) routeExternalUrl(url);
   });
-});
+
+  // macOS: links handed to the app via the OS "open with" mechanism.
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    routeExternalUrl(url);
+  });
+
+  app.whenReady().then(() => {
+    // Identifies the app to Windows (taskbar grouping, default apps).
+    app.setAppUserModelId(APP_ID);
+
+    config = readConfig();
+    registerStudySessionGuards();
+    createWindow();
+
+    // First launch: if DFBrowse was launched with a URL (e.g. because it is
+    // the default browser), route it into the webview.
+    const startupUrl = extractUrlFromArgs(process.argv.slice(1));
+    if (startupUrl) routeExternalUrl(startupUrl);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -296,3 +377,31 @@ ipcMain.handle('sites:setHome', (event, token, siteInput) => {
 });
 
 ipcMain.handle('app:studyPartition', () => STUDY_PARTITION);
+
+ipcMain.handle('app:isDefaultBrowser', () => {
+  if (process.platform !== 'win32') return true;
+  try {
+    return app.isDefaultProtocolClient('http') && app.isDefaultProtocolClient('https');
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('app:setDefaultBrowser', async () => {
+  if (process.platform !== 'win32') {
+    return { registered: true, openedSettings: false };
+  }
+  let registered = false;
+  try {
+    registered = app.setAsDefaultProtocolClient('http') && app.setAsDefaultProtocolClient('https');
+  } catch {
+    registered = false;
+  }
+  try {
+    // Open the Windows default-apps page so the user can confirm the choice.
+    await shell.openExternal('ms-settings:defaultapps');
+  } catch {
+    // Settings page failed to open; the registration itself still succeeded.
+  }
+  return { registered, openedSettings: true };
+});
