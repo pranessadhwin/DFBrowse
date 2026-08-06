@@ -4,16 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-src *;" />
-  <title>Arena Study Browser</title>
+  <title>DFBrowse</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="shell sidebar-hidden">
     <aside class="sidebar" aria-label="Study tools">
       <div class="brand">
-        <div class="logo" aria-hidden="true">A</div>
+        <div class="logo" aria-hidden="true">D</div>
         <div>
-          <h1>Study Browser</h1>
+          <h1>DFBrowse</h1>
           <p>Focused allowlist mode</p>
         </div>
       </div>
@@ -65,6 +65,17 @@
         </form>
         <div id="statusPill" class="status-pill">Ready</div>
       </nav>
+
+      <div id="defaultBrowserBanner" class="default-browser-banner hidden">
+        <div class="banner-text">
+          <span class="banner-dot" aria-hidden="true"></span>
+          <span><strong>Set DFBrowse as your default browser</strong> — links you click will open right here.</span>
+        </div>
+        <div class="banner-actions">
+          <button id="setDefaultBrowser" class="primary">Set default</button>
+          <button id="dismissDefaultBrowser" class="ghost">Not now</button>
+        </div>
+      </div>
 
       <div id="contentArea" class="content-area">
         <div id="homeScreen" class="home-screen">

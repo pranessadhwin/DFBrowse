@@ -65,7 +65,10 @@ const els = {
   focus25: $('#focus25'),
   break5: $('#break5'),
   notes: $('#notes'),
-  clearNotes: $('#clearNotes')
+  clearNotes: $('#clearNotes'),
+  defaultBanner: $('#defaultBrowserBanner'),
+  setDefaultBtn: $('#setDefaultBrowser'),
+  dismissDefaultBtn: $('#dismissDefaultBrowser')
 };
 
 function show(element) {
@@ -365,8 +368,7 @@ function resetTimer(seconds = state.timerMode === 'Focus' ? 25 * 60 : 5 * 60, mo
   updateTimerDisplay();
 }
 
-function toggleSidebar() {
-  const isHidden = els.shell.classList.toggle('sidebar-hidden');
+function toggleSidebar() {  const isHidden = els.shell.classList.toggle('sidebar-hidden');
   els.sidebarToggle.textContent = isHidden ? '\u2630' : '\u2715';
   localStorage.setItem('sidebarHidden', isHidden ? '1' : '0');
   // After sidebar animates, re-sync the webview size.
@@ -379,6 +381,17 @@ function initSidebarState() {
   const shouldHide = savedState === null || savedState === '1';
   els.shell.classList.toggle('sidebar-hidden', shouldHide);
   els.sidebarToggle.textContent = shouldHide ? '\u2630' : '\u2715';
+}
+
+async function setupDefaultBrowserBanner() {
+  if (!els.defaultBanner || typeof window.studyBrowser.isDefaultBrowser !== 'function') return;
+  try {
+    const isDefault = await window.studyBrowser.isDefaultBrowser();
+    if (isDefault) return;
+    show(els.defaultBanner);
+  } catch {
+    // Not Windows or unsupported — keep the banner hidden.
+  }
 }
 
 function bindEvents() {
@@ -403,6 +416,18 @@ function bindEvents() {
   els.manageSites.addEventListener('click', openModal);
   els.openManagerFromBlocked.addEventListener('click', openModal);
   els.closeModal.addEventListener('click', closeModal);
+
+  els.setDefaultBtn.addEventListener('click', async () => {
+    try {
+      await window.studyBrowser.setDefaultBrowser();
+    } catch {
+      // Registration failed or settings page unavailable — hide the banner.
+    }
+    hide(els.defaultBanner);
+  });
+  els.dismissDefaultBtn.addEventListener('click', () => {
+    hide(els.defaultBanner);
+  });
 
   els.createPassword.addEventListener('click', async () => {
     const password = els.newPassword.value;
@@ -577,6 +602,11 @@ function bindEvents() {
 }
 
 async function init() {
+  // Register before the first await so URLs arriving during startup are not
+  // missed (main process queues them until the shell has loaded).
+  window.studyBrowser.onOpenUrl(url => loadUrl(url));
+  setupDefaultBrowserBanner();
+
   state.config = await window.studyBrowser.getConfig();
   renderSites();
   bindEvents();

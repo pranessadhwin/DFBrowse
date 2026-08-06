@@ -13,5 +13,12 @@ contextBridge.exposeInMainWorld('studyBrowser', {
   addSite: (token, site) => ipcRenderer.invoke('sites:add', token, site),
   removeSite: (token, site) => ipcRenderer.invoke('sites:remove', token, site),
   setHome: (token, site) => ipcRenderer.invoke('sites:setHome', token, site),
-  getStudyPartition: () => ipcRenderer.invoke('app:studyPartition')
+  getStudyPartition: () => ipcRenderer.invoke('app:studyPartition'),
+  // External URLs (clicked links while DFBrowse is the default browser).
+  onOpenUrl: callback => {
+    ipcRenderer.on('app:openUrl', (event, url) => callback(url));
+  },
+  // Windows default-browser support.
+  isDefaultBrowser: () => ipcRenderer.invoke('app:isDefaultBrowser'),
+  setDefaultBrowser: () => ipcRenderer.invoke('app:setDefaultBrowser')
 });

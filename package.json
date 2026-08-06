@@ -1,37 +1,66 @@
 {
-  "name": "arena-study-browser",
+  "name": "dfbrowse",
   "version": "1.0.0",
-  "description": "A password-managed allowlist browser for focused studying.",
+  "description": "DFBrowse — a password-managed allowlist browser for focused studying.",
   "main": "src/main.js",
-  "author": "Arena.ai",
+  "author": "pranessadhwin",
   "license": "MIT",
   "private": true,
   "scripts": {
     "start": "electron .",
     "test:policy": "node test/policy.test.js",
     "build:dir": "electron-builder --dir",
-    "build": "electron-builder"
+    "build": "electron-builder --win nsis",
+    "build:win": "electron-builder --win nsis"
   },
   "dependencies": {},
   "devDependencies": {
     "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "resedit": "^2.0.2"
   },
   "build": {
-    "appId": "ai.arena.studybrowser",
-    "productName": "Arena Study Browser",
+    "appId": "com.dfbrowse.app",
+    "productName": "DFBrowse",
+    "copyright": "Copyright © 2026 pranessadhwin",
     "files": [
       "src/**/*",
       "package.json"
     ],
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
+    },
+    "afterPack": "build/afterPack.js",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "DFBrowseSetup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DFBrowse",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "differentialPackage": false,
+      "include": "build/installer.nsh"
     },
     "mac": {
       "category": "public.app-category.education"
-    },
-    "win": {
-      "target": "nsis"
     },
     "linux": {
       "target": "AppImage",
