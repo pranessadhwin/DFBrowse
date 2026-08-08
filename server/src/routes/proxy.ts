@@ -2,7 +2,6 @@ import { Router, Response } from 'express';
 import { db } from '../config/db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { hostnameMatchesAllowed } from '../utils/policy';
-import { generateStudyWebpage } from '../utils/studyPageGenerators';
 
 const router = Router();
 
@@ -68,7 +67,7 @@ router.get('/check', authMiddleware, async (req: AuthRequest, res: Response): Pr
 });
 
 // GET /api/proxy/view
-// Serves a proxied or simulated study view for allowed websites
+// Professional reverse-proxy for official study websites
 router.get('/view', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.id;
@@ -101,7 +100,7 @@ router.get('/view', authMiddleware, async (req: AuthRequest, res: Response): Pro
     const allowedHostnames = sitesRes.rows.map(row => row.hostname);
     const allowed = hostnameMatchesAllowed(hostname, allowedHostnames);
 
-    // Log attempt
+    // Log navigation attempt
     const logId = `log-${Date.now()}`;
     await db.query(
       `INSERT INTO navigation_logs (id, user_id, requested_url, hostname, status)
@@ -170,16 +169,18 @@ router.get('/view', authMiddleware, async (req: AuthRequest, res: Response): Pro
       return;
     }
 
-    // Try fetching the remote HTML directly (when internet is available)
+    // Attempt to fetch the official website from targetUrl
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const remoteRes = await fetch(targetUrl, {
         redirect: 'follow',
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 DFBrowse/1.0',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9'
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
         },
         signal: controller.signal
       });
@@ -189,22 +190,154 @@ router.get('/view', authMiddleware, async (req: AuthRequest, res: Response): Pro
       if (remoteRes.ok && contentType.includes('text/html')) {
         let html = await remoteRes.text();
         const baseUrl = new URL(targetUrl).origin;
-        html = html.replace(/<head>/i, `<head>\n<base href="${baseUrl}/">\n<style>body { font-family: sans-serif; }</style>`);
+
+        // Strip any iframe-breaking meta tags from html
+        html = html.replace(/<meta[^>]*http-equiv=["']?X-Frame-Options["']?[^>]*>/gi, '');
+        html = html.replace(/<meta[^>]*http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, '');
+
+        // Inject base tag and navigation interceptor script into <head>
+        const injection = `
+          <base href="${baseUrl}/">
+          <script>
+            // Ensure clicks on hyperlinks navigate within the DFBrowse study proxy
+            document.addEventListener('click', function(e) {
+              const link = e.target.closest('a');
+              if (link && link.href && !link.href.startsWith('javascript:')) {
+                e.preventDefault();
+                window.location.href = '/api/proxy/view?url=' + encodeURIComponent(link.href);
+              }
+            }, true);
+          </script>
+        `;
+        html = html.replace(/<head[^>]*>/i, `$&${injection}`);
 
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.send(html);
         return;
       }
-    } catch {
-      // Offline / sandbox firewall fallback -> generate interactive study webpage directly
+    } catch (fetchErr: any) {
+      console.warn(`[DFBrowse Proxy] Could not fetch official website ${targetUrl}:`, fetchErr.message);
     }
 
-    // Directly serve interactive study webpage (no intermediate card or button!)
-    const studyHtml = generateStudyWebpage(hostname, targetUrl);
+    // When offline or firewalled, display a genuine Chromium network error page
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.send(studyHtml);
+    res.status(502).send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>${hostname} - This site can't be reached</title>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            padding: 40px 20px;
+            background: #202124;
+            color: #bdc1c6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+          }
+          .error-card {
+            max-width: 600px;
+            width: 100%;
+            background: #292a2d;
+            border: 1px solid #3c4043;
+            border-radius: 12px;
+            padding: 36px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+          }
+          .icon { font-size: 48px; margin-bottom: 20px; }
+          h1 {
+            color: #e8eaed;
+            font-size: 24px;
+            font-weight: 500;
+            margin: 0 0 12px;
+          }
+          .error-code {
+            color: #8ab4f8;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 0 0 20px;
+            padding: 4px 10px;
+            background: rgba(138, 180, 248, 0.12);
+            border-radius: 6px;
+            display: inline-block;
+          }
+          p {
+            line-height: 1.6;
+            color: #9aa0a6;
+            font-size: 15px;
+            margin: 0 0 24px;
+          }
+          ul {
+            color: #9aa0a6;
+            line-height: 1.6;
+            margin: 0 0 28px 20px;
+            padding: 0;
+          }
+          .btn-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+          }
+          button.btn-primary, a.btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            border: none;
+          }
+          button.btn-primary {
+            background: #8ab4f8;
+            color: #202124;
+          }
+          button.btn-primary:hover {
+            background: #aecbfa;
+          }
+          a.btn-secondary {
+            background: #3c4043;
+            color: #e8eaed;
+            border: 1px solid #5f6368;
+          }
+          a.btn-secondary:hover {
+            background: #4a4d51;
+            border-color: #8ab4f8;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-card">
+          <div class="icon">🦖</div>
+          <h1>This site can't be reached</h1>
+          <div class="error-code">ERR_CONNECTION_TIMED_OUT / ERR_NETWORK_FIREWALL</div>
+          <p>
+            The official website <strong>${hostname}</strong> (${targetUrl}) could not be loaded from this proxy server.
+          </p>
+          <p>Try the following:</p>
+          <ul>
+            <li>Check if your network or sandbox environment allows outbound HTTPS connections to external servers.</li>
+            <li>If you are running DFBrowse in desktop Electron mode, official websites load natively without proxy restrictions.</li>
+            <li>Click below to open the official website directly in your browser tab.</li>
+          </ul>
+          <div class="btn-row">
+            <button onclick="window.location.reload()" class="btn-primary">↻ Reload Official Website</button>
+            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn-secondary">↗ Open ${hostname} in Direct Tab</a>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
   } catch (err: any) {
     console.error('Proxy view error:', err);
     res.status(500).send('Error rendering study view.');
