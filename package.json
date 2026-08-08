@@ -7,11 +7,18 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "electron .",
-    "test:policy": "node test/policy.test.js",
+    "start": "node server/dist/index.js",
+    "start:web": "node server/dist/index.js",
+    "start:electron": "electron .",
+    "dev": "npm run dev:server & npm run dev:client",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "npm run build:web",
+    "build:web": "cd client && npm run build && cd ../server && npm run build",
     "build:dir": "electron-builder --dir",
-    "build": "electron-builder --win nsis",
-    "build:win": "electron-builder --win nsis"
+    "build:win": "electron-builder --win nsis",
+    "build:electron": "electron-builder --win nsis",
+    "test:policy": "node test/policy.test.js"
   },
   "dependencies": {},
   "devDependencies": {
