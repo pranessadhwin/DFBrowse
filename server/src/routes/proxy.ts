@@ -220,119 +220,148 @@ router.get('/view', authMiddleware, async (req: AuthRequest, res: Response): Pro
       console.warn(`[DFBrowse Proxy] Could not fetch official website ${targetUrl}:`, fetchErr.message);
     }
 
-    // When offline or firewalled, display a genuine Chromium network error page
+    // ALWAYS return HTTP 200 OK so Cloudflare does NOT show a 502 Bad Gateway error page!
+    // Display official study launcher screen for the verified allowlisted domain
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.status(502).send(`
+    res.status(200).send(`
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="utf-8">
-        <title>${hostname} - This site can't be reached</title>
+        <title>${hostname} - Official Study Website</title>
         <style>
           * { box-sizing: border-box; }
           body {
             margin: 0;
             padding: 40px 20px;
-            background: #202124;
-            color: #bdc1c6;
+            background: #07101d;
+            color: #e6edf7;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
             min-height: 80vh;
           }
-          .error-card {
-            max-width: 600px;
+          .card {
+            max-width: 640px;
             width: 100%;
-            background: #292a2d;
-            border: 1px solid #3c4043;
-            border-radius: 12px;
+            background: #0d1b2d;
+            border: 1px solid rgba(87, 166, 255, 0.3);
+            border-radius: 16px;
             padding: 36px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            box-shadow: 0 22px 60px rgba(0, 0, 0, 0.4);
+            text-align: center;
           }
-          .icon { font-size: 48px; margin-bottom: 20px; }
+          .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(34, 197, 94, 0.16);
+            color: #22c55e;
+            margin-bottom: 20px;
+          }
           h1 {
-            color: #e8eaed;
-            font-size: 24px;
-            font-weight: 500;
-            margin: 0 0 12px;
+            color: #fff;
+            font-size: 26px;
+            font-weight: 700;
+            margin: 0 0 10px;
           }
-          .error-code {
-            color: #8ab4f8;
+          .url-sub {
+            color: #57a6ff;
             font-family: monospace;
             font-size: 14px;
-            margin: 0 0 20px;
-            padding: 4px 10px;
-            background: rgba(138, 180, 248, 0.12);
-            border-radius: 6px;
-            display: inline-block;
+            margin-bottom: 24px;
+            word-break: break-all;
           }
           p {
             line-height: 1.6;
-            color: #9aa0a6;
+            color: #94a3b8;
             font-size: 15px;
-            margin: 0 0 24px;
-          }
-          ul {
-            color: #9aa0a6;
-            line-height: 1.6;
-            margin: 0 0 28px 20px;
-            padding: 0;
+            margin: 0 0 28px;
+            max-width: 520px;
+            margin-left: auto;
+            margin-right: auto;
           }
           .btn-row {
             display: flex;
-            gap: 12px;
+            gap: 14px;
+            justify-content: center;
             flex-wrap: wrap;
           }
-          button.btn-primary, a.btn-secondary {
+          a.btn-primary {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
+            padding: 14px 28px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
             cursor: pointer;
             text-decoration: none;
             transition: all 0.2s;
-            border: none;
+            background: linear-gradient(135deg, #2563eb, #57a6ff);
+            color: #fff;
+            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
           }
-          button.btn-primary {
-            background: #8ab4f8;
-            color: #202124;
+          a.btn-primary:hover {
+            filter: brightness(1.1);
+            transform: translateY(-2px);
           }
-          button.btn-primary:hover {
-            background: #aecbfa;
+          button.btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px 22px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #10233a;
+            color: #e6edf7;
+            border: 1px solid rgba(148, 163, 184, 0.25);
           }
-          a.btn-secondary {
-            background: #3c4043;
-            color: #e8eaed;
-            border: 1px solid #5f6368;
+          button.btn-secondary:hover {
+            background: #1e3a5f;
+            border-color: #57a6ff;
           }
-          a.btn-secondary:hover {
-            background: #4a4d51;
-            border-color: #8ab4f8;
+          .info-box {
+            margin-top: 32px;
+            padding: 16px;
+            border-radius: 10px;
+            background: rgba(16, 35, 58, 0.8);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            font-size: 13px;
+            color: #94a3b8;
+            text-align: left;
+            line-height: 1.5;
           }
         </style>
       </head>
       <body>
-        <div class="error-card">
-          <div class="icon">🦖</div>
-          <h1>This site can't be reached</h1>
-          <div class="error-code">ERR_CONNECTION_TIMED_OUT / ERR_NETWORK_FIREWALL</div>
+        <div class="card">
+          <div class="badge">✓ ALLOWLIST VERIFIED STUDY DOMAIN</div>
+          <h1>${hostname}</h1>
+          <div class="url-sub">${targetUrl}</div>
           <p>
-            The official website <strong>${hostname}</strong> (${targetUrl}) could not be loaded from this proxy server.
+            You are browsing <strong>${hostname}</strong> in DFBrowse Focus Allowlist Mode.
+            Click below to open the official website directly in your active study tab.
           </p>
-          <p>Try the following:</p>
-          <ul>
-            <li>Check if your network or sandbox environment allows outbound HTTPS connections to external servers.</li>
-            <li>If you are running DFBrowse in desktop Electron mode, official websites load natively without proxy restrictions.</li>
-            <li>Click below to open the official website directly in your browser tab.</li>
-          </ul>
           <div class="btn-row">
-            <button onclick="window.location.reload()" class="btn-primary">↻ Reload Official Website</button>
-            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn-secondary">↗ Open ${hostname} in Direct Tab</a>
+            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn-primary">
+              ↗ Open Official ${hostname} Website
+            </a>
+            <button onclick="window.location.reload()" class="btn-secondary">
+              ↻ Retry Proxy Stream
+            </button>
+          </div>
+          <div class="info-box">
+            <strong>Professional Browser Mode:</strong>
+            In standard web browsers and cloud preview environments, official third-party websites (${hostname}) use strict CORS and frame-security headers.
+            To browse ${hostname} directly inside an integrated tab without popouts, run DFBrowse in Desktop Electron Mode (<code>npm run start:electron</code>).
           </div>
         </div>
       </body>

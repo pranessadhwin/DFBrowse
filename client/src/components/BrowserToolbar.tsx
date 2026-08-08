@@ -95,6 +95,26 @@ export const BrowserToolbar: React.FC<BrowserToolbarProps> = ({
       <div id="statusPill" className={getStatusClass()}>
         {status}
       </div>
+      {currentUrl && (
+        <a
+          href={currentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="secondary tiny"
+          style={{
+            marginLeft: '4px',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            color: '#fff',
+            background: '#2563eb',
+            borderColor: '#57a6ff',
+          }}
+          title={`Open official ${currentUrl} in browser tab`}
+        >
+          ↗ Open Official Tab
+        </a>
+      )}
       <button
         className="secondary tiny"
         style={{ marginLeft: '4px' }}
