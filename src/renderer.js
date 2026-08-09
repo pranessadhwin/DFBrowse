@@ -9,7 +9,9 @@ const state = {
   timerMode: localStorage.getItem('timerMode') || 'Focus',
   timerRunning: false,
   timerId: null,
-  currentUrl: null
+  currentUrl: null,
+  externalAuthUrl: null,
+  externalAuthTargetUrl: null
 };
 
 const els = {
@@ -22,6 +24,10 @@ const els = {
   homeScreen: $('#homeScreen'),
   blockedScreen: $('#blockedScreen'),
   blockedMessage: $('#blockedMessage'),
+  authScreen: $('#authScreen'),
+  authMessage: $('#authMessage'),
+  openAuthInBrowser: $('#openAuthInBrowser'),
+  backFromAuth: $('#backFromAuth'),
   addressForm: $('#addressForm'),
   addressInput: $('#addressInput'),
   statusPill: $('#statusPill'),
@@ -203,10 +209,24 @@ function isAllowedUrlLocally(url) {
   }
 }
 
+function isGoogleAuthUrlLocally(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    return host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
+  } catch {
+    return false;
+  }
+}
+
 function showHome() {
   hide(els.webview);
   hide(els.blockedScreen);
+  hide(els.authScreen);
   show(els.homeScreen);
+  state.externalAuthUrl = null;
+  state.externalAuthTargetUrl = null;
   els.addressInput.value = '';
   setStatus('Ready');
 }
@@ -214,10 +234,41 @@ function showHome() {
 function showBlocked(url) {
   hide(els.webview);
   hide(els.homeScreen);
+  hide(els.authScreen);
   show(els.blockedScreen);
   els.blockedMessage.textContent = `${url || 'That address'} is not on the study allowlist.`;
   els.addressInput.value = url || '';
   setStatus('Blocked', true);
+}
+
+function showExternalAuth({ authUrl, targetUrl, opened = true, error = '' } = {}) {
+  state.externalAuthUrl = authUrl || state.externalAuthUrl;
+  state.externalAuthTargetUrl = targetUrl || state.externalAuthTargetUrl;
+  hide(els.webview);
+  hide(els.homeScreen);
+  hide(els.blockedScreen);
+  show(els.authScreen);
+
+  if (opened) {
+    els.authMessage.textContent = 'Google does not allow passwords to be entered inside embedded browsers. DFBrowse opened this sign-in in your system browser instead. Finish signing in there; Google will keep your account session in that browser. For security, DFBrowse cannot copy browser cookies back into its embedded view.';
+    setStatus('Sign-in opened in browser');
+  } else {
+    els.authMessage.textContent = error || 'DFBrowse could not open your system browser. Open the sign-in again or choose Chrome, Edge, or Firefox as your default browser.';
+    setStatus('Sign-in unavailable', true);
+  }
+  els.addressInput.value = state.externalAuthTargetUrl || state.externalAuthUrl || '';
+}
+
+async function requestGoogleAuthExternally(authUrl, sourceUrl = state.currentUrl) {
+  if (!isGoogleAuthUrlLocally(authUrl)) return false;
+  try {
+    const result = await window.studyBrowser.openGoogleAuthExternally(authUrl, sourceUrl);
+    showExternalAuth(result);
+    return true;
+  } catch (error) {
+    showExternalAuth({ authUrl, targetUrl: sourceUrl, opened: false, error: error.message || String(error) });
+    return false;
+  }
 }
 
 async function loadUrl(raw) {
@@ -235,6 +286,7 @@ async function loadUrl(raw) {
 
   hide(els.homeScreen);
   hide(els.blockedScreen);
+  hide(els.authScreen);
   show(els.webview);
   syncWebviewSize();
   setStatus('Loading…');
@@ -413,6 +465,12 @@ function bindEvents() {
   });
   els.homeBtn.addEventListener('click', loadHomeSite);
   els.backToHome.addEventListener('click', showHome);
+  els.backFromAuth.addEventListener('click', showHome);
+  els.openAuthInBrowser.addEventListener('click', () => {
+    if (state.externalAuthUrl) {
+      requestGoogleAuthExternally(state.externalAuthUrl, state.externalAuthTargetUrl || state.currentUrl);
+    }
+  });
   els.manageSites.addEventListener('click', openModal);
   els.openManagerFromBlocked.addEventListener('click', openModal);
   els.closeModal.addEventListener('click', closeModal);
@@ -540,6 +598,11 @@ function bindEvents() {
     if (event.key === 'Escape' && !els.modalBackdrop.classList.contains('hidden')) closeModal();
   });
 
+  els.webview.addEventListener('will-navigate', event => {
+    if (!isGoogleAuthUrlLocally(event.url)) return;
+    event.preventDefault();
+    requestGoogleAuthExternally(event.url, state.currentUrl || els.webview.getURL());
+  });
   els.webview.addEventListener('did-start-loading', () => {
     setStatus('Loading…');
     syncWebviewSize();
@@ -572,17 +635,26 @@ function bindEvents() {
   });
   els.webview.addEventListener('new-window', event => {
     event.preventDefault();
-    // Load popup URLs directly — sign-in/OAuth flows open new windows that
-    // must not be blocked by the address-bar allowlist.
-    if (event.url) {
-      hide(els.homeScreen);
-      hide(els.blockedScreen);
-      show(els.webview);
-      syncWebviewSize();
-      els.addressInput.value = event.url;
-      state.currentUrl = event.url;
-      els.webview.src = event.url;
+    if (!event.url) return;
+
+    if (isGoogleAuthUrlLocally(event.url)) {
+      // The main process normally handles this before the event arrives. This
+      // is a renderer-side fallback for Electron versions that emit new-window
+      // without a matching webRequest main-frame callback.
+      requestGoogleAuthExternally(event.url, state.currentUrl || els.webview.getURL());
+      return;
     }
+
+    // Load ordinary popup URLs directly — sign-in/OAuth URLs are handled above
+    // so Google credentials never appear in the embedded webview.
+    hide(els.homeScreen);
+    hide(els.blockedScreen);
+    hide(els.authScreen);
+    show(els.webview);
+    syncWebviewSize();
+    els.addressInput.value = event.url;
+    state.currentUrl = event.url;
+    els.webview.src = event.url;
   });
 
   els.timerStart.addEventListener('click', startTimer);
@@ -604,6 +676,7 @@ function bindEvents() {
 async function init() {
   // Register before the first await so URLs arriving during startup are not
   // missed (main process queues them until the shell has loaded).
+  window.studyBrowser.onGoogleAuthExternalized(payload => showExternalAuth(payload));
   window.studyBrowser.onOpenUrl(url => loadUrl(url));
   setupDefaultBrowserBanner();
 

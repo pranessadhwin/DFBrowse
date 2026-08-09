@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, webContents } = require('electron');
+const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -9,15 +10,12 @@ const {
   normalizeHostname,
   normalizeAllowedList,
   isAllowedNavigationUrl,
-  isAllowedRequestUrl
+  isAllowedRequestUrl,
+  isGoogleAuthUrl
 } = require('./policy');
 
 app.commandLine.appendSwitch('disable-extensions');
 app.commandLine.appendSwitch('disable-component-extensions-with-background-pages');
-// Disable Chromium's Client Hints delegation so Electron-branded Sec-CH-UA
-// headers are never generated — our onBeforeSendHeaders overwrites them, but
-// this prevents any race with the network stack.
-app.commandLine.appendSwitch('disable-features', 'UserAgentClientHint,ReduceUserAgentMinorVersion');
 
 const STUDY_PARTITION = 'persist:study';
 const TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -69,6 +67,114 @@ function routeExternalUrl(url) {
     return;
   }
   win.webContents.send('app:openUrl', url);
+}
+
+function sourceUrlForContents(contents) {
+  try {
+    if (contents && !contents.isDestroyed()) {
+      const url = contents.getURL();
+      if (url && /^https?:\/\//i.test(url)) return url;
+    }
+  } catch {
+    // The guest contents can disappear while a popup is being created.
+  }
+  return null;
+}
+
+function externalAuthTarget(authUrl, sourceUrl) {
+  // Opening the page that started the sign-in flow is more reliable than
+  // opening Google's intermediate URL: the normal browser then creates its
+  // own cookies and OAuth state before the user clicks Sign in.  Without this
+  // step the state cookie would remain in the Electron partition and the
+  // callback could fail even though Google sign-in itself succeeded.
+  if (sourceUrl && !isGoogleAuthUrl(sourceUrl) && isAllowedNavigationUrl(sourceUrl, config.allowedSites)) {
+    return sourceUrl;
+  }
+  return authUrl;
+}
+
+function isDfbrowseDefaultBrowser() {
+  if (process.platform !== 'win32') return false;
+  try {
+    return app.isDefaultProtocolClient('http') && app.isDefaultProtocolClient('https');
+  } catch {
+    return false;
+  }
+}
+
+function launchKnownWindowsBrowser(url) {
+  if (process.platform !== 'win32') return false;
+
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env.PROGRAMFILES || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(process.env.PROGRAMFILES || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(process.env.PROGRAMFILES || '', 'Mozilla Firefox', 'firefox.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Mozilla Firefox', 'firefox.exe')
+  ];
+
+  const executable = candidates.find(candidate => candidate && fs.existsSync(candidate));
+  if (!executable) return false;
+
+  const child = spawn(executable, [url], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  });
+  child.unref();
+  return true;
+}
+
+async function openInSystemBrowser(url) {
+  // If DFBrowse is itself the Windows default browser, shell.openExternal
+  // would send the URL straight back to this app and repeat the interception.
+  // Prefer an installed Chrome/Edge/Firefox executable in that case.
+  if (isDfbrowseDefaultBrowser() && launchKnownWindowsBrowser(url)) return;
+  if (isDfbrowseDefaultBrowser()) {
+    throw new Error('DFBrowse is the default browser. Set Chrome, Edge, or Firefox as the default browser to sign in with Google.');
+  }
+  return shell.openExternal(url);
+}
+
+let lastExternalAuth = { targetUrl: null, openedAt: 0 };
+
+function notifyGoogleAuthExternalized(payload) {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win || !win.webContents || win.webContents.isDestroyed()) return;
+  win.webContents.send('app:googleAuthExternalized', payload);
+}
+
+async function openGoogleAuthExternally(authUrl, sourceUrl = null) {
+  if (!isGoogleAuthUrl(authUrl)) {
+    throw new Error('Only Google sign-in URLs can be opened outside DFBrowse.');
+  }
+
+  const targetUrl = externalAuthTarget(authUrl, sourceUrl);
+  const currentTime = now();
+  const isDuplicate = lastExternalAuth.targetUrl === targetUrl && currentTime - lastExternalAuth.openedAt < 1500;
+  if (!isDuplicate) {
+    lastExternalAuth = { targetUrl, openedAt: currentTime };
+    try {
+      // Google intentionally does not permit credentials to be entered in an
+      // embedded webview.  The system browser is the supported OAuth user
+      // agent and also preserves the user's existing Google session.
+      await openInSystemBrowser(targetUrl);
+      notifyGoogleAuthExternalized({ authUrl, targetUrl, opened: true });
+    } catch (error) {
+      notifyGoogleAuthExternalized({
+        authUrl,
+        targetUrl,
+        opened: false,
+        error: error.message || 'Could not open the system browser.'
+      });
+      throw error;
+    }
+  }
+
+  return { authUrl, targetUrl, opened: true };
 }
 
 function getConfigPath() {
@@ -162,38 +268,33 @@ function requestComesFromAllowedPage(details) {
 function registerStudySessionGuards() {
   const studySession = session.fromPartition(STUDY_PARTITION);
 
-  // ── Make the webview indistinguishable from Chrome ──────────────────
-  // Arena.ai (and similar sites) check multiple browser-identifying headers:
-  //   • User-Agent        – HTTP header AND navigator.userAgent
-  //   • Sec-CH-UA         – Client Hints "brand list"
-  //   • Sec-CH-UA-Mobile  – mobile flag
-  //   • Sec-CH-UA-Platform – OS name
-  // Electron's defaults expose "Electron" in all of these, causing API
-  // endpoints to reject requests.  We rewrite every outgoing request so the
-  // webview is 100% indistinguishable from real Chrome on Windows.
+  // Google blocks OAuth authorization from embedded webviews. Do not try to
+  // disguise Electron by rewriting the User-Agent or Client Hints: Google
+  // explicitly requires browsers to identify themselves accurately and to not
+  // rewrite their network traffic. Instead, cancel only top-level Google
+  // account navigations and continue them in the user's real browser.
+  studySession.webRequest.onBeforeRequest((details, callback) => {
+    if (details.resourceType !== 'mainFrame' || !isGoogleAuthUrl(details.url)) {
+      callback({ cancel: false });
+      return;
+    }
 
-  const CHROME_VERSION = '126';
-  const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`;
-  const CHROME_SEC_CH_UA = `"Chromium";v="${CHROME_VERSION}", "Google Chrome";v="${CHROME_VERSION}", "Not-A.Brand";v="8"`;
-
-  // Set User-Agent on the session (affects navigator.userAgent in JS).
-  studySession.setUserAgent(CHROME_UA);
-
-  // Rewrite outgoing HTTP headers on every single request.
-  studySession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const h = details.requestHeaders;
-    h['User-Agent'] = CHROME_UA;
-
-    // Overwrite Client Hints so the server never sees "Electron".
-    h['Sec-CH-UA'] = CHROME_SEC_CH_UA;
-    h['Sec-CH-UA-Mobile'] = '?0';
-    h['Sec-CH-UA-Platform'] = '"Windows"';
-    h['Sec-CH-UA-Full-Version-List'] = CHROME_SEC_CH_UA;
-
-    // Remove any header that Electron adds but Chrome doesn't.
-    delete h['X-Electron-Is-Dev'];
-
-    callback({ requestHeaders: h });
+    callback({ cancel: true });
+    let sourceContents = null;
+    try {
+      if (typeof details.webContentsId === 'number') {
+        sourceContents = webContents.fromId(details.webContentsId);
+      }
+    } catch {
+      // The guest contents may have been destroyed before the callback runs.
+    }
+    const contentsUrl = sourceUrlForContents(sourceContents);
+    const sourceUrl = details.referrer && isAllowedNavigationUrl(details.referrer, config.allowedSites)
+      ? details.referrer
+      : contentsUrl;
+    openGoogleAuthExternally(details.url, sourceUrl).catch(error => {
+      console.error('Could not open Google sign-in in the system browser.', error);
+    });
   });
 
   studySession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -286,14 +387,19 @@ app.on('window-all-closed', () => {
 });
 
 app.on('web-contents-created', (event, contents) => {
-  contents.setWindowOpenHandler(({ url }) => {
-    const isStudyView = typeof contents.getType === 'function' && contents.getType() === 'webview';
+  const isStudyView = () => typeof contents.getType === 'function' && contents.getType() === 'webview';
 
-    if (isStudyView) {
-      // Keep focus mode in one controlled browser surface.  Many Sign-in/up
-      // buttons use target="_blank" or window.open(); load every popup URL in
-      // the same webview so OAuth flows, account creation, CAPTCHAs, etc. all
-      // work exactly like opening a new tab in Chrome/Brave.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isStudyView() && isGoogleAuthUrl(url)) {
+      // A popup is the most common way that "Sign in with Google" starts.
+      // Do not load it into the guest view; hand it to the real browser.
+      openGoogleAuthExternally(url, sourceUrlForContents(contents)).catch(error => {
+        console.error('Could not open Google sign-in in the system browser.', error);
+      });
+    } else if (isStudyView()) {
+      // Keep focus mode in one controlled browser surface. Many ordinary
+      // links use target="_blank" or window.open(); load them in the same
+      // webview rather than creating an uncontrolled popup window.
       setImmediate(() => {
         if (!contents.isDestroyed()) contents.loadURL(url);
       });
@@ -301,6 +407,18 @@ app.on('web-contents-created', (event, contents) => {
 
     return { action: 'deny' };
   });
+
+  // Some sites redirect the current frame to Google rather than opening a
+  // popup. This listener covers that path as well as the webRequest guard.
+  if (isStudyView()) {
+    contents.on('will-navigate', (event, url) => {
+      if (!isGoogleAuthUrl(url)) return;
+      event.preventDefault();
+      openGoogleAuthExternally(url, sourceUrlForContents(contents)).catch(error => {
+        console.error('Could not open Google sign-in in the system browser.', error);
+      });
+    });
+  }
 });
 
 ipcMain.handle('config:get', () => publicConfig());
@@ -377,6 +495,16 @@ ipcMain.handle('sites:setHome', (event, token, siteInput) => {
 });
 
 ipcMain.handle('app:studyPartition', () => STUDY_PARTITION);
+
+ipcMain.handle('app:openGoogleAuthExternally', async (event, authUrl, sourceUrl) => {
+  if (!isGoogleAuthUrl(authUrl)) {
+    throw new Error('That is not a Google sign-in URL.');
+  }
+  if (sourceUrl && !isAllowedNavigationUrl(sourceUrl, config.allowedSites)) {
+    sourceUrl = null;
+  }
+  return openGoogleAuthExternally(authUrl, sourceUrl);
+});
 
 ipcMain.handle('app:isDefaultBrowser', () => {
   if (process.platform !== 'win32') return true;

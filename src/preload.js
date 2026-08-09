@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld('studyBrowser', {
   removeSite: (token, site) => ipcRenderer.invoke('sites:remove', token, site),
   setHome: (token, site) => ipcRenderer.invoke('sites:setHome', token, site),
   getStudyPartition: () => ipcRenderer.invoke('app:studyPartition'),
+  // Google rejects OAuth from embedded webviews. Open only validated Google
+  // sign-in URLs in the user's real browser.
+  openGoogleAuthExternally: (authUrl, sourceUrl) =>
+    ipcRenderer.invoke('app:openGoogleAuthExternally', authUrl, sourceUrl),
+  onGoogleAuthExternalized: callback => {
+    ipcRenderer.on('app:googleAuthExternalized', (event, payload) => callback(payload));
+  },
   // External URLs (clicked links while DFBrowse is the default browser).
   onOpenUrl: callback => {
     ipcRenderer.on('app:openUrl', (event, url) => callback(url));

@@ -389,6 +389,7 @@ button {
 
 .hero-card,
 .blocked-card,
+.auth-card,
 .modal {
   width: min(760px, 100%);
   border: 1px solid var(--line);
@@ -467,14 +468,23 @@ button {
   text-transform: uppercase;
 }
 
-.blocked-card {
+.blocked-card,
+.auth-card {
   text-align: center;
   width: min(560px, 100%);
 }
 
-.blocked-icon {
+.blocked-icon,
+.auth-icon {
   font-size: 46px;
   margin-bottom: 10px;
+}
+
+.auth-card p {
+  max-width: 520px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.7;
 }
 
 .blocked-actions {

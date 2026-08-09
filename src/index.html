@@ -100,7 +100,21 @@
             </div>
           </div>
         </div>
-        <webview id="webview" class="webview hidden" partition="persist:study" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
+        <div id="authScreen" class="auth-screen hidden">
+          <div class="auth-card">
+            <div class="auth-icon" aria-hidden="true">🔐</div>
+            <h2>Continue sign-in in your browser</h2>
+            <p id="authMessage">
+              Google does not allow passwords to be entered inside embedded browsers.
+              DFBrowse opened this sign-in in your system browser instead.
+            </p>
+            <div class="blocked-actions">
+              <button id="openAuthInBrowser" class="primary">Open sign-in in browser</button>
+              <button id="backFromAuth" class="secondary">Back to study home</button>
+            </div>
+          </div>
+        </div>
+        <webview id="webview" class="webview hidden" partition="persist:study" allowpopups></webview>
       </div>
     </main>
   </div>
