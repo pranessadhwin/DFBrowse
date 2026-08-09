@@ -28,10 +28,22 @@ trigger a rebuild from the **Actions** tab at any time.
 
 ## Google sign-in
 
-Google does not allow account or OAuth password pages to run inside embedded
-Electron webviews. When a site starts Google sign-in, DFBrowse cancels the
-embedded navigation and opens the site in the system browser, where Google can
-verify a supported browser and use the user's existing session. This is
-intentional: changing the User-Agent to impersonate Chrome is not a reliable or
-secure fix. If DFBrowse is your default browser, keep Chrome, Edge, or Firefox
-available as the system browser for sign-in.
+Google sign-in happens **inside DFBrowse** — no system browser round-trip.
+Study sites load in a native Electron `BrowserView` that presents itself as
+Chrome on Windows:
+
+- `app.userAgentFallback` plus a CDP `Emulation.setUserAgentOverride` provide a
+  real Chrome User-Agent (including Client Hints metadata) to every page.
+- An injected script removes the `navigator.webdriver` automation flag and
+  restores `window.chrome`, `plugins`, `vendor`, and `languages`.
+- Google account, OAuth, and anti-abuse/challenge hosts
+  (`accounts.google.com`, `google.com/sorry`, `recaptcha.net`, `gstatic.com`,
+  …) are allowed for redirects and popups, so the whole sign-in flow — CAPTCHA
+  and "verify it's you" included — stays in the app.
+- Everything else still obeys the study allowlist: deliberate navigations
+  (address bar, quick links) are strictly limited to allowed sites, and
+  top-level loads to anything else are cancelled in the main process.
+
+The BrowserView is controlled from the main process: the renderer sends
+navigation commands (navigate, back, forward, reload) and receives URL,
+loading, and blocked-page updates over IPC.

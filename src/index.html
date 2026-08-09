@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-src *;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self';" />
   <title>DFBrowse</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -100,21 +100,6 @@
             </div>
           </div>
         </div>
-        <div id="authScreen" class="auth-screen hidden">
-          <div class="auth-card">
-            <div class="auth-icon" aria-hidden="true">🔐</div>
-            <h2>Continue sign-in in your browser</h2>
-            <p id="authMessage">
-              Google does not allow passwords to be entered inside embedded browsers.
-              DFBrowse opened this sign-in in your system browser instead.
-            </p>
-            <div class="blocked-actions">
-              <button id="openAuthInBrowser" class="primary">Open sign-in in browser</button>
-              <button id="backFromAuth" class="secondary">Back to study home</button>
-            </div>
-          </div>
-        </div>
-        <webview id="webview" class="webview hidden" partition="persist:study" allowpopups></webview>
       </div>
     </main>
   </div>

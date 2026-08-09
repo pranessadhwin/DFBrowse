@@ -4,7 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('studyBrowser', {
   getConfig: () => ipcRenderer.invoke('config:get'),
-  canNavigate: url => ipcRenderer.invoke('policy:canNavigate', url),
   setPassword: password => ipcRenderer.invoke('auth:setPassword', password),
   changePassword: (token, oldPassword, newPassword) =>
     ipcRenderer.invoke('auth:changePassword', token, oldPassword, newPassword),
@@ -13,13 +12,22 @@ contextBridge.exposeInMainWorld('studyBrowser', {
   addSite: (token, site) => ipcRenderer.invoke('sites:add', token, site),
   removeSite: (token, site) => ipcRenderer.invoke('sites:remove', token, site),
   setHome: (token, site) => ipcRenderer.invoke('sites:setHome', token, site),
-  getStudyPartition: () => ipcRenderer.invoke('app:studyPartition'),
-  // Google rejects OAuth from embedded webviews. Open only validated Google
-  // sign-in URLs in the user's real browser.
-  openGoogleAuthExternally: (authUrl, sourceUrl) =>
-    ipcRenderer.invoke('app:openGoogleAuthExternally', authUrl, sourceUrl),
-  onGoogleAuthExternalized: callback => {
-    ipcRenderer.on('app:googleAuthExternalized', (event, payload) => callback(payload));
+  // BrowserView navigation is owned by the main process; the renderer only
+  // sends commands and receives state updates.
+  navigate: url => ipcRenderer.invoke('browser:navigate', url),
+  goHome: () => ipcRenderer.invoke('browser:goHome'),
+  goBack: () => ipcRenderer.invoke('browser:goBack'),
+  goForward: () => ipcRenderer.invoke('browser:goForward'),
+  reload: () => ipcRenderer.invoke('browser:reload'),
+  setViewState: state => ipcRenderer.send('browser:setViewState', state),
+  onUrlChanged: callback => {
+    ipcRenderer.on('browser:url-changed', (event, payload) => callback(payload));
+  },
+  onLoading: callback => {
+    ipcRenderer.on('browser:loading', (event, payload) => callback(payload));
+  },
+  onBlocked: callback => {
+    ipcRenderer.on('browser:blocked', (event, payload) => callback(payload));
   },
   // External URLs (clicked links while DFBrowse is the default browser).
   onOpenUrl: callback => {

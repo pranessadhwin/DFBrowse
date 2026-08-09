@@ -363,14 +363,6 @@ button {
   overflow: hidden;
 }
 
-.webview {
-  flex: 1 1 0;
-  display: flex;
-  width: 100%;
-  min-height: 0;
-  border: none;
-}
-
 .home-screen,
 .blocked-screen {
   position: absolute;
@@ -389,7 +381,6 @@ button {
 
 .hero-card,
 .blocked-card,
-.auth-card,
 .modal {
   width: min(760px, 100%);
   border: 1px solid var(--line);
@@ -468,23 +459,14 @@ button {
   text-transform: uppercase;
 }
 
-.blocked-card,
-.auth-card {
+.blocked-card {
   text-align: center;
   width: min(560px, 100%);
 }
 
-.blocked-icon,
-.auth-icon {
+.blocked-icon {
   font-size: 46px;
   margin-bottom: 10px;
-}
-
-.auth-card p {
-  max-width: 520px;
-  margin-left: auto;
-  margin-right: auto;
-  line-height: 1.7;
 }
 
 .blocked-actions {

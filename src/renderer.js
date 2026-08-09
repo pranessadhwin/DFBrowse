@@ -10,8 +10,10 @@ const state = {
   timerRunning: false,
   timerId: null,
   currentUrl: null,
-  externalAuthUrl: null,
-  externalAuthTargetUrl: null
+  // The native BrowserView is attached whenever a page is on screen. The
+  // shell keeps this in sync with the visible screen (home / blocked hide it).
+  viewVisible: false,
+  viewWasVisible: false
 };
 
 const els = {
@@ -20,14 +22,9 @@ const els = {
   siteList: $('#siteList'),
   quickLinks: $('#quickLinks'),
   contentArea: $('#contentArea'),
-  webview: $('#webview'),
   homeScreen: $('#homeScreen'),
   blockedScreen: $('#blockedScreen'),
   blockedMessage: $('#blockedMessage'),
-  authScreen: $('#authScreen'),
-  authMessage: $('#authMessage'),
-  openAuthInBrowser: $('#openAuthInBrowser'),
-  backFromAuth: $('#backFromAuth'),
   addressForm: $('#addressForm'),
   addressInput: $('#addressInput'),
   statusPill: $('#statusPill'),
@@ -85,30 +82,21 @@ function hide(element) {
   element.classList.add('hidden');
 }
 
-function syncWebviewSize() {
-  // Electron's <webview> guest view sometimes gets "stuck" rendering at a
-  // stale, smaller size instead of tracking its container's percentage-based
-  // width/height — most noticeably right after it's unhidden or the window
-  // resizes, which leaves most of the page blank below a small rendered strip.
-  // Explicitly pinning pixel dimensions from the real container box keeps the
-  // guest compositor in sync regardless of when that happens.
-  if (!els.contentArea || els.webview.classList.contains('hidden')) return;
+// The study view is a native BrowserView owned by the main process, so the
+// shell reports where it should sit on screen (below the toolbar and banner,
+// next to the sidebar) and whether it should be visible at all.
+function syncViewState() {
+  if (!state.viewVisible) {
+    window.studyBrowser.setViewState({ visible: false });
+    return;
+  }
   const rect = els.contentArea.getBoundingClientRect();
-  const w = `${Math.round(rect.width)}px`;
-  const h = `${Math.round(rect.height)}px`;
-  els.webview.style.width = w;
-  els.webview.style.height = h;
-
-  // Double-RAF: the first rAF fires before the compositor, the second fires
-  // after layout has been committed, catching stale-measurement edge cases
-  // (e.g. right after unhiding the element).
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      if (els.webview.classList.contains('hidden')) return;
-      const rect2 = els.contentArea.getBoundingClientRect();
-      els.webview.style.width = `${Math.round(rect2.width)}px`;
-      els.webview.style.height = `${Math.round(rect2.height)}px`;
-    });
+  window.studyBrowser.setViewState({
+    visible: true,
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
   });
 }
 
@@ -209,66 +197,32 @@ function isAllowedUrlLocally(url) {
   }
 }
 
-function isGoogleAuthUrlLocally(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return false;
-    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    return host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
-  } catch {
-    return false;
-  }
-}
-
 function showHome() {
-  hide(els.webview);
+  state.viewVisible = false;
   hide(els.blockedScreen);
-  hide(els.authScreen);
   show(els.homeScreen);
-  state.externalAuthUrl = null;
-  state.externalAuthTargetUrl = null;
   els.addressInput.value = '';
   setStatus('Ready');
+  updateNavState(false, false);
+  syncViewState();
 }
 
 function showBlocked(url) {
-  hide(els.webview);
+  state.viewVisible = false;
   hide(els.homeScreen);
-  hide(els.authScreen);
   show(els.blockedScreen);
   els.blockedMessage.textContent = `${url || 'That address'} is not on the study allowlist.`;
   els.addressInput.value = url || '';
   setStatus('Blocked', true);
+  syncViewState();
 }
 
-function showExternalAuth({ authUrl, targetUrl, opened = true, error = '' } = {}) {
-  state.externalAuthUrl = authUrl || state.externalAuthUrl;
-  state.externalAuthTargetUrl = targetUrl || state.externalAuthTargetUrl;
-  hide(els.webview);
+// Attach the BrowserView and hide the shell's overlay screens.
+function showPage() {
   hide(els.homeScreen);
   hide(els.blockedScreen);
-  show(els.authScreen);
-
-  if (opened) {
-    els.authMessage.textContent = 'Google does not allow passwords to be entered inside embedded browsers. DFBrowse opened this sign-in in your system browser instead. Finish signing in there; Google will keep your account session in that browser. For security, DFBrowse cannot copy browser cookies back into its embedded view.';
-    setStatus('Sign-in opened in browser');
-  } else {
-    els.authMessage.textContent = error || 'DFBrowse could not open your system browser. Open the sign-in again or choose Chrome, Edge, or Firefox as your default browser.';
-    setStatus('Sign-in unavailable', true);
-  }
-  els.addressInput.value = state.externalAuthTargetUrl || state.externalAuthUrl || '';
-}
-
-async function requestGoogleAuthExternally(authUrl, sourceUrl = state.currentUrl) {
-  if (!isGoogleAuthUrlLocally(authUrl)) return false;
-  try {
-    const result = await window.studyBrowser.openGoogleAuthExternally(authUrl, sourceUrl);
-    showExternalAuth(result);
-    return true;
-  } catch (error) {
-    showExternalAuth({ authUrl, targetUrl: sourceUrl, opened: false, error: error.message || String(error) });
-    return false;
-  }
+  state.viewVisible = true;
+  syncViewState();
 }
 
 async function loadUrl(raw) {
@@ -278,44 +232,47 @@ async function loadUrl(raw) {
     return;
   }
 
-  const allowed = await window.studyBrowser.canNavigate(url);
-  if (!allowed) {
-    showBlocked(url);
+  const result = await window.studyBrowser.navigate(url);
+  if (!result || !result.ok) {
+    showBlocked(result && result.url ? result.url : url);
     return;
   }
 
-  hide(els.homeScreen);
-  hide(els.blockedScreen);
-  hide(els.authScreen);
-  show(els.webview);
-  syncWebviewSize();
+  showPage();
   setStatus('Loading…');
   els.addressInput.value = url;
   state.currentUrl = url;
-  els.webview.src = url;
-  // Electron's guest compositor sometimes needs a few frames to initialise
-  // after the src changes; re-sync at staggered intervals to be safe.
-  setTimeout(syncWebviewSize, 50);
-  setTimeout(syncWebviewSize, 150);
 }
 
 async function loadHomeSite() {
   const homeSite = state.config.homeSite || state.config.allowedSites[0];
-  if (homeSite) await loadUrl(`https://${homeSite}`);
-  else showHome();
+  if (!homeSite) {
+    showHome();
+    return;
+  }
+  const result = await window.studyBrowser.navigate(`https://${homeSite}`);
+  if (!result || !result.ok) {
+    showHome();
+    return;
+  }
+  showPage();
+  setStatus('Loading…');
+  els.addressInput.value = `https://${homeSite}`;
+  state.currentUrl = `https://${homeSite}`;
 }
 
-function updateNavState() {
-  try {
-    els.backBtn.disabled = !els.webview.canGoBack();
-    els.forwardBtn.disabled = !els.webview.canGoForward();
-  } catch {
-    els.backBtn.disabled = true;
-    els.forwardBtn.disabled = true;
-  }
+function updateNavState(canGoBack = false, canGoForward = false) {
+  els.backBtn.disabled = !canGoBack;
+  els.forwardBtn.disabled = !canGoForward;
 }
 
 function openModal() {
+  // The site-manager modal covers the whole window, so the BrowserView (which
+  // renders above the shell DOM) must be detached while it is open.
+  state.viewWasVisible = state.viewVisible;
+  state.viewVisible = false;
+  syncViewState();
+
   els.modalError.textContent = '';
   show(els.modalBackdrop);
   if (!state.config.passwordEnabled) {
@@ -341,6 +298,11 @@ function closeModal() {
   hide(els.modalBackdrop);
   els.modalError.textContent = '';
   resetChangePasswordForm();
+  if (state.viewWasVisible) {
+    state.viewVisible = true;
+    state.viewWasVisible = false;
+    syncViewState();
+  }
 }
 
 function showManager() {
@@ -420,11 +382,12 @@ function resetTimer(seconds = state.timerMode === 'Focus' ? 25 * 60 : 5 * 60, mo
   updateTimerDisplay();
 }
 
-function toggleSidebar() {  const isHidden = els.shell.classList.toggle('sidebar-hidden');
+function toggleSidebar() {
+  const isHidden = els.shell.classList.toggle('sidebar-hidden');
   els.sidebarToggle.textContent = isHidden ? '\u2630' : '\u2715';
   localStorage.setItem('sidebarHidden', isHidden ? '1' : '0');
-  // After sidebar animates, re-sync the webview size.
-  setTimeout(syncWebviewSize, 320);
+  // After the sidebar animation finishes, re-position the BrowserView.
+  setTimeout(syncViewState, 320);
 }
 
 function initSidebarState() {
@@ -441,6 +404,8 @@ async function setupDefaultBrowserBanner() {
     const isDefault = await window.studyBrowser.isDefaultBrowser();
     if (isDefault) return;
     show(els.defaultBanner);
+    // The banner pushes the content area down, so the view must move too.
+    syncViewState();
   } catch {
     // Not Windows or unsupported — keep the banner hidden.
   }
@@ -455,22 +420,16 @@ function bindEvents() {
   });
 
   els.backBtn.addEventListener('click', () => {
-    if (els.webview.canGoBack()) els.webview.goBack();
+    if (state.viewVisible) window.studyBrowser.goBack();
   });
   els.forwardBtn.addEventListener('click', () => {
-    if (els.webview.canGoForward()) els.webview.goForward();
+    if (state.viewVisible) window.studyBrowser.goForward();
   });
   els.reloadBtn.addEventListener('click', () => {
-    if (!els.webview.classList.contains('hidden')) els.webview.reload();
+    if (state.viewVisible) window.studyBrowser.reload();
   });
   els.homeBtn.addEventListener('click', loadHomeSite);
   els.backToHome.addEventListener('click', showHome);
-  els.backFromAuth.addEventListener('click', showHome);
-  els.openAuthInBrowser.addEventListener('click', () => {
-    if (state.externalAuthUrl) {
-      requestGoogleAuthExternally(state.externalAuthUrl, state.externalAuthTargetUrl || state.currentUrl);
-    }
-  });
   els.manageSites.addEventListener('click', openModal);
   els.openManagerFromBlocked.addEventListener('click', openModal);
   els.closeModal.addEventListener('click', closeModal);
@@ -482,9 +441,11 @@ function bindEvents() {
       // Registration failed or settings page unavailable — hide the banner.
     }
     hide(els.defaultBanner);
+    syncViewState();
   });
   els.dismissDefaultBtn.addEventListener('click', () => {
     hide(els.defaultBanner);
+    syncViewState();
   });
 
   els.createPassword.addEventListener('click', async () => {
@@ -598,65 +559,6 @@ function bindEvents() {
     if (event.key === 'Escape' && !els.modalBackdrop.classList.contains('hidden')) closeModal();
   });
 
-  els.webview.addEventListener('will-navigate', event => {
-    if (!isGoogleAuthUrlLocally(event.url)) return;
-    event.preventDefault();
-    requestGoogleAuthExternally(event.url, state.currentUrl || els.webview.getURL());
-  });
-  els.webview.addEventListener('did-start-loading', () => {
-    setStatus('Loading…');
-    syncWebviewSize();
-  });
-  els.webview.addEventListener('dom-ready', syncWebviewSize);
-  els.webview.addEventListener('did-stop-loading', () => {
-    // Show whether the current page is on the allowlist (informational).
-    const url = els.webview.getURL();
-    const onAllowlist = isAllowedUrlLocally(url);
-    setStatus(onAllowlist ? 'Allowed' : 'Browsing', !onAllowlist);
-    syncWebviewSize();
-    updateNavState();
-  });
-  els.webview.addEventListener('did-navigate', event => {
-    state.currentUrl = event.url;
-    els.addressInput.value = event.url;
-    updateNavState();
-  });
-  els.webview.addEventListener('did-navigate-in-page', event => {
-    state.currentUrl = event.url;
-    els.addressInput.value = event.url;
-    updateNavState();
-  });
-  els.webview.addEventListener('did-fail-load', event => {
-    if (event.errorCode === -3) return;
-    if (event.isMainFrame) {
-      const failedUrl = event.validatedURL || state.currentUrl || '';
-      showBlocked(failedUrl);
-    }
-  });
-  els.webview.addEventListener('new-window', event => {
-    event.preventDefault();
-    if (!event.url) return;
-
-    if (isGoogleAuthUrlLocally(event.url)) {
-      // The main process normally handles this before the event arrives. This
-      // is a renderer-side fallback for Electron versions that emit new-window
-      // without a matching webRequest main-frame callback.
-      requestGoogleAuthExternally(event.url, state.currentUrl || els.webview.getURL());
-      return;
-    }
-
-    // Load ordinary popup URLs directly — sign-in/OAuth URLs are handled above
-    // so Google credentials never appear in the embedded webview.
-    hide(els.homeScreen);
-    hide(els.blockedScreen);
-    hide(els.authScreen);
-    show(els.webview);
-    syncWebviewSize();
-    els.addressInput.value = event.url;
-    state.currentUrl = event.url;
-    els.webview.src = event.url;
-  });
-
   els.timerStart.addEventListener('click', startTimer);
   els.timerPause.addEventListener('click', pauseTimer);
   els.timerReset.addEventListener('click', () => resetTimer());
@@ -673,10 +575,34 @@ function bindEvents() {
   });
 }
 
+// State updates pushed from the main process (the BrowserView lives there).
+function registerMainProcessEvents() {
+  window.studyBrowser.onUrlChanged(({ url, canGoBack, canGoForward }) => {
+    state.currentUrl = url || state.currentUrl;
+    els.addressInput.value = url || '';
+    updateNavState(canGoBack, canGoForward);
+  });
+
+  window.studyBrowser.onLoading(({ isLoading }) => {
+    if (!state.viewVisible) return;
+    if (isLoading) {
+      setStatus('Loading…');
+    } else {
+      const onAllowlist = isAllowedUrlLocally(state.currentUrl || '');
+      setStatus(onAllowlist ? 'Allowed' : 'Browsing', !onAllowlist);
+      updateNavState();
+    }
+  });
+
+  window.studyBrowser.onBlocked(({ url }) => {
+    if (state.viewVisible) showBlocked(url || state.currentUrl || '');
+  });
+}
+
 async function init() {
   // Register before the first await so URLs arriving during startup are not
   // missed (main process queues them until the shell has loaded).
-  window.studyBrowser.onGoogleAuthExternalized(payload => showExternalAuth(payload));
+  registerMainProcessEvents();
   window.studyBrowser.onOpenUrl(url => loadUrl(url));
   setupDefaultBrowserBanner();
 
@@ -686,16 +612,15 @@ async function init() {
   initSidebarState();
   updateTimerDisplay();
   showHome();
-  updateNavState();
+  updateNavState(false, false);
 
-  // Keep the webview's pixel dimensions pinned to the content area at all
-  // times, including on window resize. ResizeObserver also fires once
-  // immediately on observe(), so this sets the correct initial size too.
-  const contentAreaResizeObserver = new ResizeObserver(() => syncWebviewSize());
+  // Keep the BrowserView pinned to the content area (toolbar/banner above it,
+  // sidebar to its left) whenever the shell layout changes.
+  const contentAreaResizeObserver = new ResizeObserver(() => syncViewState());
   contentAreaResizeObserver.observe(els.contentArea);
 
   // Extra safety net: window resize events that ResizeObserver might miss.
-  window.addEventListener('resize', syncWebviewSize);
+  window.addEventListener('resize', syncViewState);
 }
 
 init().catch(error => {

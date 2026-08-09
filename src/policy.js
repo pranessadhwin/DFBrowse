@@ -22,6 +22,27 @@ const SAFE_INTERNAL_PROTOCOLS = new Set([
   'chrome-error:'
 ]);
 
+// Hosts that belong to the Google account / OAuth sign-in flow.  Google
+// sign-in is kept inside DFBrowse (the study view presents itself as Chrome),
+// so these hosts must be able to load even though they are not on the study
+// allowlist.  Subdomains match automatically (accounts.google.com covers
+// login.accounts.google.com, etc.).
+const GOOGLE_AUTH_DOMAINS = Object.freeze([
+  'accounts.google.com',
+  'accounts.youtube.com',
+  'oauth.googleusercontent.com'
+]);
+
+// Google's anti-abuse / challenge pages (CAPTCHA, "unusual traffic",
+// account recovery, recaptcha) live on these hosts and can appear in the
+// middle of an otherwise normal sign-in redirect chain.
+const GOOGLE_CHALLENGE_DOMAINS = Object.freeze([
+  'google.com',
+  'googleusercontent.com',
+  'gstatic.com',
+  'recaptcha.net'
+]);
+
 function normalizeHostname(input) {
   if (typeof input !== 'string') {
     throw new Error('Site must be text.');
@@ -75,6 +96,12 @@ function hostnameMatchesAllowed(hostname, allowedSites) {
   return sites.some(site => host === site || host.endsWith(`.${site}`));
 }
 
+function hostnameMatchesDomains(hostname, domains) {
+  if (!hostname) return false;
+  const host = String(hostname).toLowerCase().replace(/\.$/, '');
+  return domains.some(domain => host === domain || host.endsWith(`.${domain}`));
+}
+
 function isAllowedNavigationUrl(url, allowedSites) {
   try {
     const parsed = new URL(url);
@@ -106,8 +133,39 @@ function isGoogleAuthUrl(url) {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
-    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    return host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
+    return hostnameMatchesDomains(parsed.hostname, GOOGLE_AUTH_DOMAINS);
+  } catch {
+    return false;
+  }
+}
+
+// Broader check used for redirects, popups, and top-level loads: any Google
+// sign-in host OR any Google challenge/anti-abuse host.  This keeps the
+// whole sign-in flow (including CAPTCHA and "verify it's you" pages) inside
+// DFBrowse instead of bouncing the user out of the app.
+function isGoogleAuthNavigationUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    return (
+      hostnameMatchesDomains(parsed.hostname, GOOGLE_AUTH_DOMAINS) ||
+      hostnameMatchesDomains(parsed.hostname, GOOGLE_CHALLENGE_DOMAINS)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Full rule for a top-level (main-frame) load inside the study view: the
+// study allowlist, the Google sign-in/challenge carve-out, or Chromium's own
+// internal protocols (about:blank, data:, blob:, chrome-error:, …).
+function isAllowedMainFrameUrl(url, allowedSites) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return isAllowedNavigationUrl(url, allowedSites) || isGoogleAuthNavigationUrl(url);
+    }
+    return SAFE_INTERNAL_PROTOCOLS.has(parsed.protocol);
   } catch {
     return false;
   }
@@ -115,10 +173,15 @@ function isGoogleAuthUrl(url) {
 
 module.exports = {
   DEFAULT_ALLOWED_SITES,
+  GOOGLE_AUTH_DOMAINS,
+  GOOGLE_CHALLENGE_DOMAINS,
+  SAFE_INTERNAL_PROTOCOLS,
   normalizeHostname,
   normalizeAllowedList,
   hostnameMatchesAllowed,
   isAllowedNavigationUrl,
   isAllowedRequestUrl,
-  isGoogleAuthUrl
+  isAllowedMainFrameUrl,
+  isGoogleAuthUrl,
+  isGoogleAuthNavigationUrl
 };
