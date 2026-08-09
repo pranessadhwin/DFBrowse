@@ -97,11 +97,28 @@ function isAllowedRequestUrl(url, allowedSites) {
   }
 }
 
+// Google deliberately rejects OAuth and account sign-in requests made from
+// embedded browsers such as Electron webviews.  Keeping this check in the
+// policy module means the main process and the tests use exactly the same
+// hostname rules (and avoids accidentally treating accounts.google.com.evil.com
+// as a Google host).
+function isGoogleAuthUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    return host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   DEFAULT_ALLOWED_SITES,
   normalizeHostname,
   normalizeAllowedList,
   hostnameMatchesAllowed,
   isAllowedNavigationUrl,
-  isAllowedRequestUrl
+  isAllowedRequestUrl,
+  isGoogleAuthUrl
 };

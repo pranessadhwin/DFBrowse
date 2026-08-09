@@ -25,3 +25,13 @@ npm run test:policy
 The Windows installer is also built automatically by GitHub Actions
 (`.github/workflows/build-windows.yml`) and published as a release; you can
 trigger a rebuild from the **Actions** tab at any time.
+
+## Google sign-in
+
+Google does not allow account or OAuth password pages to run inside embedded
+Electron webviews. When a site starts Google sign-in, DFBrowse cancels the
+embedded navigation and opens the site in the system browser, where Google can
+verify a supported browser and use the user's existing session. This is
+intentional: changing the User-Agent to impersonate Chrome is not a reliable or
+secure fix. If DFBrowse is your default browser, keep Chrome, Edge, or Firefox
+available as the system browser for sign-in.
