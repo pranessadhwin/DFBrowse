@@ -43,6 +43,15 @@
         <div id="siteList" class="site-list"></div>
       </section>
 
+      <section class="panel" aria-label="Google accounts">
+        <div class="panel-title-row">
+          <h2>Google accounts</h2>
+          <button id="addAccount" class="tiny">Add email</button>
+        </div>
+        <div id="accountList" class="account-list"></div>
+        <p class="hint">Stored sign-in emails — sign in to any site with one click.</p>
+      </section>
+
       <section class="panel notes-panel" aria-label="Study notes">
         <div class="panel-title-row">
           <h2>Quick notes</h2>
@@ -108,8 +117,10 @@
               Google does not allow passwords to be entered inside embedded browsers.
               DFBrowse opened this sign-in in your system browser instead.
             </p>
+            <div id="authAccounts" class="auth-accounts hidden"></div>
             <div class="blocked-actions">
               <button id="openAuthInBrowser" class="primary">Open sign-in in browser</button>
+              <button id="addAccountFromAuth" class="secondary">Add a different email</button>
               <button id="backFromAuth" class="secondary">Back to study home</button>
             </div>
           </div>
@@ -175,6 +186,30 @@
       </div>
 
       <p id="modalError" class="modal-error" role="alert"></p>
+    </div>
+  </div>
+
+  <div id="accountModalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="accountModalTitle">Add a Google email</h2>
+          <p id="accountModalSubtitle">Sign in to Google in your default browser, then save the email here.</p>
+        </div>
+        <button id="closeAccountModal" class="icon-btn" aria-label="Close">×</button>
+      </div>
+      <div class="modal-section">
+        <ol class="account-steps">
+          <li>Click <strong>Open Google sign-in</strong> — your default browser (Chrome / Edge / Firefox) will open Google.</li>
+          <li>Sign in with the Google account you want DFBrowse to remember.</li>
+          <li>Come back here and type that email below, then press <strong>Save email</strong>.</li>
+        </ol>
+        <button id="openAccountSignIn" class="primary full">Open Google sign-in</button>
+        <label for="accountEmail">Email you signed in with</label>
+        <input id="accountEmail" type="email" placeholder="you@example.com" autocomplete="email" spellcheck="false" />
+        <button id="saveAccount" class="secondary full">Save email</button>
+        <p id="accountModalError" class="modal-error" role="alert"></p>
+      </div>
     </div>
   </div>
 

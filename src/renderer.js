@@ -38,6 +38,18 @@ const els = {
   manageSites: $('#manageSites'),
   openManagerFromBlocked: $('#openManagerFromBlocked'),
   backToHome: $('#backToHome'),
+  accountList: $('#accountList'),
+  addAccount: $('#addAccount'),
+  authAccounts: $('#authAccounts'),
+  addAccountFromAuth: $('#addAccountFromAuth'),
+  accountModalBackdrop: $('#accountModalBackdrop'),
+  accountModalTitle: $('#accountModalTitle'),
+  accountModalSubtitle: $('#accountModalSubtitle'),
+  closeAccountModal: $('#closeAccountModal'),
+  openAccountSignIn: $('#openAccountSignIn'),
+  accountEmail: $('#accountEmail'),
+  saveAccount: $('#saveAccount'),
+  accountModalError: $('#accountModalError'),
   modalBackdrop: $('#modalBackdrop'),
   closeModal: $('#closeModal'),
   modalTitle: $('#modalTitle'),
@@ -179,6 +191,129 @@ function renderManagerList() {
   }
 }
 
+function accountInitial(email) {
+  return (email || '').trim().charAt(0).toUpperCase() || 'G';
+}
+
+function renderSidebarAccounts() {
+  els.accountList.innerHTML = '';
+  const accounts = state.config.accounts || [];
+  if (!accounts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'account-empty';
+    empty.textContent = 'No email saved yet. Add one to sign in with a single click.';
+    els.accountList.appendChild(empty);
+    return;
+  }
+
+  for (const account of accounts) {
+    const row = document.createElement('div');
+    row.className = 'account-item';
+
+    const dot = document.createElement('span');
+    dot.className = 'favicon-dot account-dot';
+    dot.textContent = accountInitial(account.email);
+
+    const email = document.createElement('span');
+    email.className = 'account-email';
+    email.textContent = account.email;
+    email.title = account.email;
+
+    const use = document.createElement('button');
+    use.className = 'tiny';
+    use.textContent = 'Sign in';
+    use.title = `Sign in with ${account.email} in your default browser`;
+    use.addEventListener('click', () => signInWithAccount(account, null));
+
+    const remove = document.createElement('button');
+    remove.className = 'tiny danger-text account-remove';
+    remove.textContent = '×';
+    remove.title = 'Remove email';
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Remove ${account.email} from DFBrowse?`)) return;
+      try {
+        await refreshConfig(await window.studyBrowser.removeAccount(account.id));
+      } catch (error) {
+        // Ignore — the list is re-rendered from config on success only.
+      }
+    });
+
+    row.append(dot, email, use, remove);
+    els.accountList.appendChild(row);
+  }
+}
+
+function renderAuthAccounts() {
+  els.authAccounts.innerHTML = '';
+  const accounts = state.config.accounts || [];
+  if (!accounts.length) {
+    hide(els.authAccounts);
+    return;
+  }
+
+  show(els.authAccounts);
+  const heading = document.createElement('p');
+  heading.className = 'auth-accounts-heading';
+  heading.textContent = 'Continue with a saved email:';
+  els.authAccounts.appendChild(heading);
+
+  for (const account of accounts) {
+    const btn = document.createElement('button');
+    btn.className = 'account-signin';
+
+    const dot = document.createElement('span');
+    dot.className = 'favicon-dot account-dot';
+    dot.textContent = accountInitial(account.email);
+
+    const label = document.createElement('span');
+    label.textContent = `Continue as ${account.email}`;
+
+    btn.append(dot, label);
+    btn.addEventListener('click', () => signInWithAccount(account, state.externalAuthTargetUrl || state.currentUrl));
+    els.authAccounts.appendChild(btn);
+  }
+}
+
+function renderAccounts() {
+  renderSidebarAccounts();
+  renderAuthAccounts();
+}
+
+// Sign in using a stored email: mark it as last-used and open the sign-in in
+// the user's real browser (Google will offer/use that account from its own
+// session there). DFBrowse never asks for the password itself.
+async function signInWithAccount(account, sourceUrl) {
+  try {
+    await window.studyBrowser.markAccountUsed(account.id);
+    await refreshConfig();
+  } catch (error) {
+    // Still try to open sign-in even if bookkeeping failed.
+  }
+
+  try {
+    await window.studyBrowser.openAccountSignIn(account.email, sourceUrl);
+    if (!els.authScreen.classList.contains('hidden')) {
+      setStatus(`Sign-in opened for ${account.email}`);
+    } else {
+      setStatus('Opened Google sign-in in your browser');
+    }
+  } catch (error) {
+    setStatus(error.message || 'Could not open your browser.', true);
+  }
+}
+
+function openAccountModal() {
+  els.accountModalError.textContent = '';
+  els.accountEmail.value = '';
+  show(els.accountModalBackdrop);
+  els.accountEmail.focus();
+}
+
+function closeAccountModal() {
+  hide(els.accountModalBackdrop);
+  els.accountModalError.textContent = '';
+}
+
 function inputToUrl(input) {
   const value = input.trim();
   if (!value) return null;
@@ -248,6 +383,7 @@ function showExternalAuth({ authUrl, targetUrl, opened = true, error = '' } = {}
   hide(els.homeScreen);
   hide(els.blockedScreen);
   show(els.authScreen);
+  renderAuthAccounts();
 
   if (opened) {
     els.authMessage.textContent = 'Google does not allow passwords to be entered inside embedded browsers. DFBrowse opened this sign-in in your system browser instead. Finish signing in there; Google will keep your account session in that browser. For security, DFBrowse cannot copy browser cookies back into its embedded view.';
@@ -367,6 +503,7 @@ function resetChangePasswordForm() {
 async function refreshConfig(nextConfig) {
   state.config = nextConfig || await window.studyBrowser.getConfig();
   renderSites();
+  renderAccounts();
   if (!state.config.allowedSites.includes(state.config.homeSite)) {
     state.config.homeSite = state.config.allowedSites[0];
   }
@@ -474,6 +611,40 @@ function bindEvents() {
   els.manageSites.addEventListener('click', openModal);
   els.openManagerFromBlocked.addEventListener('click', openModal);
   els.closeModal.addEventListener('click', closeModal);
+
+  els.addAccount.addEventListener('click', openAccountModal);
+  els.addAccountFromAuth.addEventListener('click', openAccountModal);
+  els.closeAccountModal.addEventListener('click', closeAccountModal);
+  els.accountModalBackdrop.addEventListener('click', event => {
+    if (event.target === els.accountModalBackdrop) closeAccountModal();
+  });
+
+  els.openAccountSignIn.addEventListener('click', async () => {
+    els.accountModalError.textContent = '';
+    try {
+      await window.studyBrowser.openAccountSignIn(null, null);
+      setStatus('Opened Google sign-in in your browser');
+    } catch (error) {
+      els.accountModalError.textContent = error.message || 'Could not open your browser.';
+      setStatus('Sign-in unavailable', true);
+    }
+  });
+
+  els.saveAccount.addEventListener('click', async () => {
+    els.accountModalError.textContent = '';
+    try {
+      await refreshConfig(await window.studyBrowser.addAccount(els.accountEmail.value));
+      els.accountEmail.value = '';
+      closeAccountModal();
+      setStatus('Email saved');
+    } catch (error) {
+      els.accountModalError.textContent = error.message || String(error);
+    }
+  });
+
+  els.accountEmail.addEventListener('keydown', event => {
+    if (event.key === 'Enter') els.saveAccount.click();
+  });
 
   els.setDefaultBtn.addEventListener('click', async () => {
     try {
@@ -595,6 +766,7 @@ function bindEvents() {
       els.addressInput.focus();
       els.addressInput.select();
     }
+    if (event.key === 'Escape' && !els.accountModalBackdrop.classList.contains('hidden')) closeAccountModal();
     if (event.key === 'Escape' && !els.modalBackdrop.classList.contains('hidden')) closeModal();
   });
 
@@ -682,6 +854,7 @@ async function init() {
 
   state.config = await window.studyBrowser.getConfig();
   renderSites();
+  renderAccounts();
   bindEvents();
   initSidebarState();
   updateTimerDisplay();
