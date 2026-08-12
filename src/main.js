@@ -11,7 +11,8 @@ const {
   normalizeAllowedList,
   isAllowedNavigationUrl,
   isAllowedRequestUrl,
-  isGoogleAuthUrl
+  isGoogleAuthUrl,
+  normalizeEmailAddress
 } = require('./policy');
 
 app.commandLine.appendSwitch('disable-extensions');
@@ -187,9 +188,42 @@ function defaultConfig() {
     allowedSites: normalizeAllowedList([...DEFAULT_ALLOWED_SITES]),
     homeSite: 'arena.ai',
     password: null,
+    accounts: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+}
+
+function makeAccountId() {
+  return `acc_${crypto.randomBytes(8).toString('hex')}`;
+}
+
+// Normalize persisted accounts back into a safe, well-formed list. Bad or
+// duplicate entries are dropped rather than crashing startup.
+function normalizeAccounts(accounts) {
+  if (!Array.isArray(accounts)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const account of accounts) {
+    if (!account || typeof account !== 'object') continue;
+    let email;
+    try {
+      email = normalizeEmailAddress(account.email);
+    } catch {
+      continue;
+    }
+    if (seen.has(email)) continue;
+    seen.add(email);
+    const addedAt = typeof account.addedAt === 'string' ? account.addedAt : new Date().toISOString();
+    out.push({
+      id: typeof account.id === 'string' && account.id ? account.id : makeAccountId(),
+      email,
+      provider: 'google',
+      addedAt,
+      lastUsedAt: typeof account.lastUsedAt === 'string' ? account.lastUsedAt : addedAt
+    });
+  }
+  return out;
 }
 
 function readConfig() {
@@ -200,7 +234,8 @@ function readConfig() {
       return {
         ...defaultConfig(),
         ...loaded,
-        allowedSites: normalizeAllowedList(loaded.allowedSites && loaded.allowedSites.length ? loaded.allowedSites : DEFAULT_ALLOWED_SITES)
+        allowedSites: normalizeAllowedList(loaded.allowedSites && loaded.allowedSites.length ? loaded.allowedSites : DEFAULT_ALLOWED_SITES),
+        accounts: normalizeAccounts(loaded.accounts)
       };
     }
   } catch (error) {
@@ -222,6 +257,7 @@ function publicConfig() {
     allowedSites: [...config.allowedSites],
     homeSite: config.homeSite,
     passwordEnabled: Boolean(config.password),
+    accounts: (config.accounts || []).map(account => ({ ...account })),
     configPath
   };
 }
@@ -493,6 +529,63 @@ ipcMain.handle('sites:setHome', (event, token, siteInput) => {
   writeConfig();
   return publicConfig();
 });
+
+// ---- Stored sign-in identities (Google emails) --------------------------
+// DFBrowse can't complete Google sign-in itself (Google blocks credentials in
+// embedded webviews), so these handlers only record the email a user signed in
+// with in their real browser. Passwords are never stored or seen by DFBrowse.
+
+ipcMain.handle('accounts:add', (event, email) => {
+  const normalized = normalizeEmailAddress(email);
+  if ((config.accounts || []).some(account => account.email === normalized)) {
+    throw new Error('That email is already saved.');
+  }
+  const nowIso = new Date().toISOString();
+  config.accounts = [
+    ...(config.accounts || []),
+    { id: makeAccountId(), email: normalized, provider: 'google', addedAt: nowIso, lastUsedAt: nowIso }
+  ];
+  writeConfig();
+  return publicConfig();
+});
+
+ipcMain.handle('accounts:remove', (event, id) => {
+  if (typeof id !== 'string' || !id) throw new Error('Choose an email to remove.');
+  const next = (config.accounts || []).filter(account => account.id !== id);
+  if (next.length === (config.accounts || []).length) throw new Error('That email is not saved.');
+  config.accounts = next;
+  writeConfig();
+  return publicConfig();
+});
+
+ipcMain.handle('accounts:markUsed', (event, id) => {
+  const account = (config.accounts || []).find(item => item.id === id);
+  if (!account) throw new Error('That email is not saved.');
+  account.lastUsedAt = new Date().toISOString();
+  writeConfig();
+  return publicConfig();
+});
+
+// Open Google sign-in (or the account chooser pre-filled with a saved email)
+// in the user's real browser so the session is created there. This is the
+// "take me to the default browser and sign in" step.
+ipcMain.handle('accounts:openSignIn', async (event, email, sourceUrl) => {
+  let targetUrl = 'https://accounts.google.com/';
+  if (sourceUrl && isAllowedNavigationUrl(sourceUrl, config.allowedSites)) {
+    // Signing in to a site: open the site itself so its sign-in/OAuth flow
+    // completes in the real browser using the existing Google session.
+    targetUrl = sourceUrl;
+  } else if (email) {
+    // No site in play — refresh the Google session for this email by opening
+    // the account chooser pre-filled with it.
+    const normalized = normalizeEmailAddress(email);
+    const continueUrl = 'https://accounts.google.com/';
+    targetUrl = `https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(normalized)}&continue=${encodeURIComponent(continueUrl)}`;
+  }
+  await openInSystemBrowser(targetUrl);
+  return { opened: true, targetUrl };
+});
+
 
 ipcMain.handle('app:studyPartition', () => STUDY_PARTITION);
 

@@ -113,6 +113,27 @@ function isGoogleAuthUrl(url) {
   }
 }
 
+// A basic, permissive email validation used for the stored sign-in identities.
+// DFBrowse only records the email address (an identity label), never the
+// account password — Google sign-in itself always happens in the user's real
+// browser and never inside the embedded webview.
+function normalizeEmailAddress(input) {
+  if (typeof input !== 'string') {
+    throw new Error('Email must be text.');
+  }
+  const value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error('Email cannot be empty.');
+  }
+  if (value.length > 254) {
+    throw new Error('Email is too long.');
+  }
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(value)) {
+    throw new Error('Enter a valid email address.');
+  }
+  return value;
+}
+
 module.exports = {
   DEFAULT_ALLOWED_SITES,
   normalizeHostname,
@@ -120,5 +141,6 @@ module.exports = {
   hostnameMatchesAllowed,
   isAllowedNavigationUrl,
   isAllowedRequestUrl,
-  isGoogleAuthUrl
+  isGoogleAuthUrl,
+  normalizeEmailAddress
 };

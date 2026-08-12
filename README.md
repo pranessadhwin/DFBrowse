@@ -35,3 +35,17 @@ verify a supported browser and use the user's existing session. This is
 intentional: changing the User-Agent to impersonate Chrome is not a reliable or
 secure fix. If DFBrowse is your default browser, keep Chrome, Edge, or Firefox
 available as the system browser for sign-in.
+
+### Stored sign-in emails
+
+DFBrowse can remember the Google emails you sign in with so you don't have to
+start from scratch each time:
+
+1. Open the **Google accounts** panel and click **Add email**.
+2. Click **Open Google sign-in** — your default browser opens Google.
+3. Sign in there, then type that email back in DFBrowse and press **Save email**.
+
+After that, whenever a site starts Google sign-in, the sign-in screen lists your
+saved emails and you can continue with one click. Only the email address is
+stored — DFBrowse never sees or stores account passwords, and Google sign-in
+always happens in your real browser.
