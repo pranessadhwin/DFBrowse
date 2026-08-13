@@ -1,16 +1,19 @@
 'use strict';
 
-const { app, BrowserView, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserView, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
+const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const WebSocket = require('ws');
 const {
   DEFAULT_ALLOWED_SITES,
   normalizeHostname,
   normalizeAllowedList,
   isAllowedNavigationUrl,
   isAllowedMainFrameUrl,
-  isGoogleAuthNavigationUrl
+  isGoogleAuthNavigationUrl,
+  isGoogleImportHost
 } = require('./policy');
 
 app.commandLine.appendSwitch('disable-extensions');
@@ -579,6 +582,415 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('will-quit', () => {
+  clearInterval(importState.pollTimer);
+  clearTimeout(importState.countdownTimer);
+  if (importState.cdp) {
+    try { importState.cdp.close(); } catch { /* already closed */ }
+  }
+  if (importState.child && !importState.child.killed) {
+    try { importState.child.kill(); } catch { /* already gone */ }
+  }
+});
+
+// ── One-time Google account import ─────────────────────────────────────────
+// First-run (and any-time) setup: DFBrowse opens the user's real Chrome/Edge
+// in import mode, the user signs in with every email they want, and DFBrowse
+// copies the Google sessions (cookies) into its own persistent storage via
+// the Chrome DevTools Protocol. After that, sign-in always happens inside
+// DFBrowse and the real browser is never needed again.
+const IMPORT_DETECTION_INTERVAL_MS = 3000;
+const IMPORT_AUTO_FINISH_SECONDS = 5;
+
+const importState = {
+  browserPath: null,
+  profileDir: null,
+  child: null,
+  port: null,
+  cdp: null,
+  phase: 'idle', // idle | needs-close | opening | waiting | signed-in | importing | done | cancelled | error
+  pollTimer: null,
+  countdownTimer: null,
+  cookieHash: null,
+  countdownSeconds: IMPORT_AUTO_FINISH_SECONDS,
+  countdownPaused: false
+};
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function emitImportStatus(extra = {}) {
+  sendToShell('import:status', { phase: importState.phase, ...extra });
+}
+
+function clearImportTimers() {
+  clearInterval(importState.pollTimer);
+  clearTimeout(importState.countdownTimer);
+  importState.pollTimer = null;
+  importState.countdownTimer = null;
+}
+
+function findChromiumBrowser() {
+  const candidates = [];
+  if (process.platform === 'win32') {
+    const roots = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']].filter(Boolean);
+    for (const root of roots) {
+      candidates.push(path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+      candidates.push(path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
+    }
+  } else if (process.platform === 'darwin') {
+    candidates.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    candidates.push('/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge');
+  } else {
+    candidates.push(
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/microsoft-edge'
+    );
+  }
+  return candidates.find(candidate => candidate && fs.existsSync(candidate)) || null;
+}
+
+function browserProfileDir(browserPath) {
+  if (process.platform === 'win32') {
+    if (/msedge/i.test(browserPath)) {
+      return path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'User Data');
+    }
+    return path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
+  }
+  if (process.platform === 'darwin') {
+    if (/msedge/i.test(browserPath)) {
+      return path.join(app.getPath('home'), 'Library', 'Application Support', 'Microsoft Edge');
+    }
+    return path.join(app.getPath('home'), 'Library', 'Application Support', 'Google', 'Chrome');
+  }
+  if (/edge/i.test(browserPath)) {
+    return path.join(app.getPath('home'), '.config', 'microsoft-edge');
+  }
+  return path.join(app.getPath('home'), '.config', 'google-chrome');
+}
+
+function browserDisplayName(browserPath) {
+  return /msedge|microsoft-edge/i.test(browserPath) ? 'Edge' : 'Chrome';
+}
+
+function browserProcessRunning(browserPath) {
+  if (process.platform !== 'win32') return false;
+  const exe = path.basename(browserPath).toLowerCase();
+  try {
+    const result = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${exe}`, '/NH'], {
+      encoding: 'utf8',
+      timeout: 10000
+    });
+    return new RegExp(exe, 'i').test(result.stdout || '');
+  } catch {
+    return false;
+  }
+}
+
+function launchChromiumForImport(browserPath) {
+  // Port 0 = Chrome picks a free port and writes it to DevToolsActivePort in
+  // the profile dir. remote-allow-origins is required by newer Chrome for
+  // DevTools websocket connections that don't come from the browser's own UI.
+  const args = [
+    '--remote-debugging-port=0',
+    '--remote-allow-origins=*',
+    '--no-first-run',
+    '--no-default-browser-check',
+    'https://accounts.google.com'
+  ];
+  const child = spawn(browserPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  return child;
+}
+
+async function waitForDevToolsPort(profileDir, timeoutMs = 60000) {
+  const portFile = path.join(profileDir, 'DevToolsActivePort');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const content = fs.readFileSync(portFile, 'utf8').trim();
+      const port = Number(content.split(/\r?\n/)[0].trim());
+      if (Number.isInteger(port) && port > 0) return port;
+    } catch {
+      // File not written yet — keep waiting.
+    }
+    await delay(1000);
+  }
+  return null;
+}
+
+function createCdpClient(wsUrl) {
+  const socket = new WebSocket(wsUrl);
+  const pending = new Map();
+  let nextId = 1;
+
+  const ready = new Promise((resolve, reject) => {
+    socket.on('open', resolve);
+    socket.on('error', reject);
+  });
+
+  socket.on('message', data => {
+    let message;
+    try {
+      message = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    if (message && message.id && pending.has(message.id)) {
+      const entry = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error) entry.reject(new Error(message.error.message));
+      else entry.resolve(message.result);
+    }
+  });
+
+  return {
+    ready,
+    send(method, params = {}) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+    },
+    close() {
+      try { socket.close(); } catch { /* already closed */ }
+    }
+  };
+}
+
+async function connectCdp(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+  const version = await response.json();
+  const client = createCdpClient(version.webSocketDebuggerUrl);
+  await client.ready;
+  return client;
+}
+
+function mapSameSite(value) {
+  if (value === 'None') return 'no_restriction';
+  if (value === 'Lax') return 'lax';
+  if (value === 'Strict') return 'strict';
+  return 'unspecified';
+}
+
+function googleCookiesFrom(cookies) {
+  return (cookies || []).filter(cookie => !cookie.partitionKey && isGoogleImportHost(String(cookie.domain || '').replace(/^\./, '')));
+}
+
+function isSignedIntoGoogle(cookies) {
+  const names = new Set((cookies || []).map(cookie => cookie.name));
+  return ['SID', 'SAPISID', '__Secure-1PSID'].some(name => names.has(name));
+}
+
+function cookieHash(cookies) {
+  const parts = (cookies || [])
+    .map(cookie => `${cookie.domain}|${cookie.name}|${cookie.value}`)
+    .sort()
+    .join('\n');
+  return crypto.createHash('sha256').update(parts).digest('hex');
+}
+
+async function closeLaunchedBrowser() {
+  clearImportTimers();
+  if (importState.cdp) {
+    try { await importState.cdp.send('Browser.close'); } catch { /* browser may already be closed */ }
+    try { importState.cdp.close(); } catch { /* already closed */ }
+  }
+  if (importState.child && !importState.child.killed) {
+    try { importState.child.kill(); } catch { /* already gone */ }
+  }
+  importState.cdp = null;
+  importState.child = null;
+  importState.port = null;
+}
+
+function startImportDetection() {
+  clearInterval(importState.pollTimer);
+  importState.pollTimer = setInterval(async () => {
+    if (importState.phase !== 'waiting' && importState.phase !== 'signed-in') return;
+    try {
+      if (!importState.cdp) importState.cdp = await connectCdp(importState.port);
+      const { cookies } = await importState.cdp.send('Network.getAllCookies');
+      const googleCookies = googleCookiesFrom(cookies);
+      const hash = cookieHash(googleCookies);
+
+      if (!isSignedIntoGoogle(googleCookies)) return;
+
+      if (hash !== importState.cookieHash) {
+        importState.cookieHash = hash;
+        importState.countdownSeconds = IMPORT_AUTO_FINISH_SECONDS;
+        importState.countdownPaused = false;
+        if (importState.phase !== 'signed-in') {
+          importState.phase = 'signed-in';
+          emitImportStatus({
+            message: 'Signed in detected! Your Google sessions will be imported in a few seconds…'
+          });
+        }
+      }
+
+      if (!importState.countdownPaused && importState.phase === 'signed-in') {
+        importState.countdownSeconds -= 1;
+        if (importState.countdownSeconds <= 0) {
+          await finishImport();
+        }
+      }
+    } catch {
+      // Browser is starting up or was closed mid-flow; keep polling.
+    }
+  }, IMPORT_DETECTION_INTERVAL_MS);
+}
+
+async function finishImport() {
+  if (importState.phase === 'importing' || importState.phase === 'done') return;
+  clearImportTimers();
+  importState.phase = 'importing';
+  emitImportStatus({ message: 'Importing your Google sessions into DFBrowse…' });
+
+  let imported = 0;
+  let total = 0;
+  try {
+    if (!importState.cdp) importState.cdp = await connectCdp(importState.port);
+    const { cookies } = await importState.cdp.send('Network.getAllCookies');
+    total = cookies.length;
+
+    const studySession = session.fromPartition(STUDY_PARTITION);
+    for (const cookie of cookies) {
+      if (cookie.partitionKey) continue;
+      if (!isGoogleImportHost(String(cookie.domain || '').replace(/^\./, ''))) continue;
+      const details = {
+        url: `https://${String(cookie.domain).replace(/^\./, '')}${cookie.path || '/'}`,
+        name: cookie.name,
+        value: cookie.value,
+        path: cookie.path || '/',
+        secure: Boolean(cookie.secure),
+        httpOnly: Boolean(cookie.httpOnly),
+        sameSite: mapSameSite(cookie.sameSite)
+      };
+      if (cookie.expires && cookie.expires > 0) details.expirationDate = cookie.expires;
+      try {
+        await studySession.cookies.set(details);
+        imported += 1;
+      } catch (error) {
+        console.warn('Could not import cookie', cookie.domain, cookie.name, error && error.message);
+      }
+    }
+  } catch (error) {
+    importState.phase = 'error';
+    emitImportStatus({ message: `Import failed: ${error && error.message ? error.message : 'unknown error'}`, error: true });
+    await closeLaunchedBrowser();
+    return;
+  }
+
+  await closeLaunchedBrowser();
+  importState.phase = 'done';
+  emitImportStatus({
+    message: `Done! ${imported} Google sessions saved in DFBrowse. From now on, sign-in happens inside DFBrowse — no other browser needed.`,
+    imported,
+    total
+  });
+}
+
+async function importStart() {
+  const activePhases = new Set(['needs-close', 'opening', 'waiting', 'signed-in', 'importing']);
+  if (activePhases.has(importState.phase)) {
+    return { started: false, error: 'in-progress' };
+  }
+
+  importState.browserPath = findChromiumBrowser();
+  if (!importState.browserPath) {
+    importState.phase = 'error';
+    emitImportStatus({
+      message: 'No Chrome or Edge found. Install Google Chrome or Microsoft Edge, then try again.',
+      error: true
+    });
+    return { started: false, error: 'no-browser' };
+  }
+
+  const browserName = browserDisplayName(importState.browserPath);
+  importState.profileDir = browserProfileDir(importState.browserPath);
+
+  // The browser must be closed so it reopens with the debugging port.
+  if (browserProcessRunning(importState.browserPath)) {
+    importState.phase = 'needs-close';
+    emitImportStatus({ message: `DFBrowse needs to reopen ${browserName} in import mode. Please close ${browserName} now.` });
+    let response = 1;
+    try {
+      const options = {
+        type: 'warning',
+        title: 'Import my Google accounts',
+        message: `Please close ${browserName} to continue.`,
+        detail: 'DFBrowse reopens it in import mode for about a minute, imports your Google sessions, and closes it again. Your bookmarks and settings are untouched.',
+        buttons: ['I closed it', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1
+      };
+      const result = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+      response = result.response;
+    } catch {
+      response = 1;
+    }
+    if (response !== 0) {
+      importState.phase = 'cancelled';
+      emitImportStatus({ message: 'Import cancelled. You can start it again any time from the Import accounts button.' });
+      return { started: false, error: 'user-cancelled' };
+    }
+
+    let closed = false;
+    for (let i = 0; i < 90; i += 1) {
+      if (!browserProcessRunning(importState.browserPath)) {
+        closed = true;
+        break;
+      }
+      await delay(1000);
+    }
+    if (!closed) {
+      importState.phase = 'cancelled';
+      emitImportStatus({ message: 'Cancelled — the browser is still open. Close it and try again when you are ready.' });
+      return { started: false, error: 'browser-open' };
+    }
+  }
+
+  importState.phase = 'opening';
+  emitImportStatus({ message: `Opening ${browserName} in import mode…` });
+
+  try {
+    importState.child = launchChromiumForImport(importState.browserPath);
+    importState.port = await waitForDevToolsPort(importState.profileDir, 60000);
+    if (!importState.port) throw new Error('the browser did not start in import mode');
+    await connectCdp(importState.port).then(client => { client.close(); });
+  } catch (error) {
+    importState.phase = 'error';
+    emitImportStatus({
+      message: `Could not start ${browserName} in import mode (${error && error.message ? error.message : 'unknown error'}). Open it normally and try again.`,
+      error: true
+    });
+    await closeLaunchedBrowser();
+    return { started: false, error: 'launch-failed' };
+  }
+
+  importState.phase = 'waiting';
+  importState.cookieHash = null;
+  importState.countdownSeconds = IMPORT_AUTO_FINISH_SECONDS;
+  importState.countdownPaused = false;
+  emitImportStatus({
+    message: `${browserName} is open — sign in with every email you want to store in DFBrowse. DFBrowse will detect when you are done.`
+  });
+  startImportDetection();
+
+  return { started: true };
+}
+
+async function importCancel() {
+  clearImportTimers();
+  await closeLaunchedBrowser();
+  importState.phase = 'cancelled';
+  emitImportStatus({ message: 'Import cancelled.' });
+  return true;
+}
+
 // ── IPC: shell <-> main ─────────────────────────────────────────────────────
 
 ipcMain.handle('config:get', () => publicConfig());
@@ -746,3 +1158,26 @@ ipcMain.handle('app:setDefaultBrowser', async () => {
   }
   return { registered, openedSettings: true };
 });
+
+// ── One-time Google account import IPC ──────────────────────────────────────
+
+ipcMain.handle('import:start', () => importStart());
+
+ipcMain.handle('import:finishNow', async () => {
+  importState.countdownPaused = false;
+  importState.countdownSeconds = 0;
+  await finishImport();
+  return true;
+});
+
+ipcMain.handle('import:keepWaiting', () => {
+  importState.countdownPaused = true;
+  importState.countdownSeconds = IMPORT_AUTO_FINISH_SECONDS;
+  importState.phase = 'waiting';
+  emitImportStatus({
+    message: 'Waiting — sign in with any additional accounts, then DFBrowse will import automatically.'
+  });
+  return true;
+});
+
+ipcMain.handle('import:cancel', () => importCancel());

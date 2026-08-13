@@ -496,6 +496,107 @@ button {
   z-index: 20;
 }
 
+/* One-time Google account import */
+.import-actions {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.import-actions .hint {
+  max-width: 440px;
+  text-align: center;
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+.import-card {
+  text-align: left;
+}
+
+.import-steps {
+  list-style: none;
+  counter-reset: import-step;
+  display: grid;
+  gap: 10px;
+  margin: 6px 0 16px;
+  padding: 0;
+}
+
+.import-steps li {
+  counter-increment: import-step;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #94a3b8;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(11, 21, 38, 0.6);
+}
+
+.import-steps li::before {
+  content: counter(import-step);
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.import-steps li.active {
+  color: #e2e8f0;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.import-steps li.done {
+  color: #e2e8f0;
+  border-color: rgba(34, 197, 94, 0.45);
+}
+
+.import-steps li.done::before {
+  content: '✓';
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+}
+
+.import-status {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(11, 21, 38, 0.7);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+
+.import-status.error {
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fca5a5;
+}
+
+.import-status.success {
+  border-color: rgba(34, 197, 94, 0.55);
+  color: #86efac;
+}
+
+.import-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .modal {
   width: min(620px, 100%);
   max-height: min(760px, calc(100vh - 40px));

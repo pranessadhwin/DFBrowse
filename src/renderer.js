@@ -13,7 +13,9 @@ const state = {
   // The native BrowserView is attached whenever a page is on screen. The
   // shell keeps this in sync with the visible screen (home / blocked hide it).
   viewVisible: false,
-  viewWasVisible: false
+  viewWasVisible: false,
+  // One-time Google account import flow.
+  importPhase: 'idle'
 };
 
 const els = {
@@ -71,7 +73,18 @@ const els = {
   clearNotes: $('#clearNotes'),
   defaultBanner: $('#defaultBrowserBanner'),
   setDefaultBtn: $('#setDefaultBrowser'),
-  dismissDefaultBtn: $('#dismissDefaultBrowser')
+  dismissDefaultBtn: $('#dismissDefaultBrowser'),
+  importBtn: $('#importBtn'),
+  importAccountsBtn: $('#importAccountsBtn'),
+  importOverlay: $('#importOverlay'),
+  closeImport: $('#closeImport'),
+  importSteps: $('#importSteps'),
+  importStatus: $('#importStatus'),
+  importFinishBtn: $('#importFinishBtn'),
+  importMoreBtn: $('#importMoreBtn'),
+  importRetryBtn: $('#importRetryBtn'),
+  importCloseBtn: $('#importCloseBtn'),
+  importCancelBtn: $('#importCancelBtn')
 };
 
 function show(element) {
@@ -305,6 +318,107 @@ function closeModal() {
   }
 }
 
+// ── One-time Google account import ──────────────────────────────────────────
+
+function setImportStep(step, done) {
+  const item = els.importSteps.querySelector(`[data-step="${step}"]`);
+  if (!item) return;
+  item.classList.toggle('done', Boolean(done));
+}
+
+function resetImportUi() {
+  setImportStep('open', false);
+  setImportStep('signin', false);
+  setImportStep('import', false);
+}
+
+function setImportButtons({ finish = false, more = false, retry = false, closeBtn = false, cancel = true }) {
+  els.importFinishBtn.classList.toggle('hidden', !finish);
+  els.importMoreBtn.classList.toggle('hidden', !more);
+  els.importRetryBtn.classList.toggle('hidden', !retry);
+  els.importCloseBtn.classList.toggle('hidden', !closeBtn);
+  els.importCancelBtn.classList.toggle('hidden', !cancel);
+}
+
+function applyImportStatus(payload) {
+  const phase = payload && payload.phase ? payload.phase : 'idle';
+  state.importPhase = phase;
+  els.importStatus.textContent = (payload && payload.message) || '';
+  els.importStatus.classList.toggle('error', Boolean(payload && payload.error));
+  els.importStatus.classList.toggle('success', phase === 'done');
+
+  switch (phase) {
+    case 'opening':
+      resetImportUi();
+      setImportStep('open', false);
+      setImportButtons({ cancel: true });
+      break;
+    case 'needs-close':
+    case 'waiting':
+      resetImportUi();
+      setImportStep('open', true);
+      setImportButtons({ cancel: true });
+      break;
+    case 'signed-in':
+      setImportStep('open', true);
+      setImportStep('signin', true);
+      setImportButtons({ finish: true, more: true, cancel: true });
+      break;
+    case 'importing':
+      setImportStep('open', true);
+      setImportStep('signin', true);
+      setImportButtons({ cancel: true });
+      break;
+    case 'done':
+      setImportStep('open', true);
+      setImportStep('signin', true);
+      setImportStep('import', true);
+      setImportButtons({ closeBtn: true, cancel: false });
+      break;
+    case 'cancelled':
+      setImportButtons({ retry: true, closeBtn: true, cancel: false });
+      break;
+    case 'error':
+      setImportButtons({ retry: true, closeBtn: true, cancel: false });
+      break;
+    default:
+      setImportButtons({ cancel: true });
+  }
+}
+
+function openImportModal() {
+  // The overlay covers the whole window, so the BrowserView (which renders
+  // above the shell DOM) must be detached while it is open.
+  state.viewWasVisible = state.viewVisible;
+  state.viewVisible = false;
+  syncViewState();
+
+  resetImportUi();
+  applyImportStatus({ phase: 'opening', message: 'Starting…' });
+  show(els.importOverlay);
+
+  window.studyBrowser.importAccounts().then(result => {
+    if (result && result.started === false && !result.error) {
+      applyImportStatus({ phase: 'error', message: 'Import could not start.', error: true });
+    }
+  }).catch(() => {
+    applyImportStatus({ phase: 'error', message: 'Import could not start.', error: true });
+  });
+}
+
+function closeImportModal(restoreView = true) {
+  if (restoreView && state.viewWasVisible) {
+    state.viewVisible = true;
+    state.viewWasVisible = false;
+    syncViewState();
+    // Cookies may have changed during the import — refresh the open page so
+    // the imported sessions take effect immediately.
+    if (state.importPhase === 'done') window.studyBrowser.reload();
+  }
+  hide(els.importOverlay);
+  state.importPhase = 'idle';
+}
+
 function showManager() {
   els.modalTitle.textContent = 'Manage allowed websites';
   els.modalSubtitle.textContent = 'Only these websites can load in the study browser.';
@@ -434,6 +548,25 @@ function bindEvents() {
   els.openManagerFromBlocked.addEventListener('click', openModal);
   els.closeModal.addEventListener('click', closeModal);
 
+  // One-time Google account import.
+  els.importBtn.addEventListener('click', openImportModal);
+  els.importAccountsBtn.addEventListener('click', openImportModal);
+  els.closeImport.addEventListener('click', () => {
+    if (state.importPhase !== 'importing') {
+      if (state.importPhase !== 'done' && state.importPhase !== 'cancelled' && state.importPhase !== 'error') {
+        window.studyBrowser.cancelImport();
+      }
+      closeImportModal();
+    }
+  });
+  els.importFinishBtn.addEventListener('click', () => window.studyBrowser.finishImport());
+  els.importMoreBtn.addEventListener('click', () => window.studyBrowser.keepWaitingImport());
+  els.importRetryBtn.addEventListener('click', () => {
+    closeImportModal(false);
+    setTimeout(openImportModal, 150);
+  });
+  els.importCloseBtn.addEventListener('click', () => closeImportModal());
+
   els.setDefaultBtn.addEventListener('click', async () => {
     try {
       await window.studyBrowser.setDefaultBrowser();
@@ -557,6 +690,12 @@ function bindEvents() {
       els.addressInput.select();
     }
     if (event.key === 'Escape' && !els.modalBackdrop.classList.contains('hidden')) closeModal();
+    if (event.key === 'Escape' && !els.importOverlay.classList.contains('hidden') && state.importPhase !== 'importing') {
+      if (state.importPhase !== 'done' && state.importPhase !== 'cancelled' && state.importPhase !== 'error') {
+        window.studyBrowser.cancelImport();
+      }
+      closeImportModal();
+    }
   });
 
   els.timerStart.addEventListener('click', startTimer);
@@ -597,6 +736,8 @@ function registerMainProcessEvents() {
   window.studyBrowser.onBlocked(({ url }) => {
     if (state.viewVisible) showBlocked(url || state.currentUrl || '');
   });
+
+  window.studyBrowser.onImportStatus(payload => applyImportStatus(payload));
 }
 
 async function init() {

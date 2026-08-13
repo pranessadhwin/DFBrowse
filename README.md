@@ -44,6 +44,23 @@ Chrome on Windows:
   (address bar, quick links) are strictly limited to allowed sites, and
   top-level loads to anything else are cancelled in the main process.
 
+### Importing your accounts once (one-time setup)
+
+To start already signed in, click **👤 Import my Google accounts** (toolbar or
+home screen) once:
+
+1. DFBrowse reopens your installed **Chrome** (or Edge, if Chrome isn't
+   installed) in a temporary import mode — you may be asked to close the
+   browser for a minute.
+2. Sign in with **every email you want stored** in that browser window.
+3. DFBrowse detects the sign-in and copies your Google sessions (Gmail,
+   Google account, Gemini, NotebookLM, …) into its own permanent storage, then
+   closes the browser.
+
+After that the real browser is never needed again: sign-in to any website
+happens inside DFBrowse, and your imported sessions persist across restarts.
+Re-run the button any time you want to add another account.
+
 The BrowserView is controlled from the main process: the renderer sends
 navigation commands (navigate, back, forward, reload) and receives URL,
 loading, and blocked-page updates over IPC.

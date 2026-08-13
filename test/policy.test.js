@@ -10,8 +10,10 @@ const {
   isAllowedMainFrameUrl,
   isGoogleAuthUrl,
   isGoogleAuthNavigationUrl,
+  isGoogleImportHost,
   GOOGLE_AUTH_DOMAINS,
-  GOOGLE_CHALLENGE_DOMAINS
+  GOOGLE_CHALLENGE_DOMAINS,
+  GOOGLE_IMPORT_DOMAINS
 } = require('../src/policy');
 
 assert.strictEqual(normalizeHostname('https://www.github.com/path?q=1'), 'github.com');
@@ -47,6 +49,18 @@ assert.strictEqual(isGoogleAuthNavigationUrl('https://www.gstatic.com/recaptcha/
 assert.strictEqual(isGoogleAuthNavigationUrl('https://youtube.com/'), false);
 assert.strictEqual(isGoogleAuthNavigationUrl('http://google.com.evil.example/'), false);
 assert.strictEqual(isGoogleAuthNavigationUrl('https://google.com.evil.example/sorry'), false);
+
+// One-time import domains: cookie hosts that belong to a Google session.
+assert.deepStrictEqual(GOOGLE_IMPORT_DOMAINS.includes('google.com'), true);
+assert.strictEqual(isGoogleImportHost('accounts.google.com'), true);
+assert.strictEqual(isGoogleImportHost('.google.com'), true);
+assert.strictEqual(isGoogleImportHost('mail.google.com'), true);
+assert.strictEqual(isGoogleImportHost('gemini.google.com'), true);
+assert.strictEqual(isGoogleImportHost('gstatic.com'), true);
+assert.strictEqual(isGoogleImportHost('googleusercontent.com'), true);
+assert.strictEqual(isGoogleImportHost('googleapis.com'), true);
+assert.strictEqual(isGoogleImportHost('gmail.com'), false);
+assert.strictEqual(isGoogleImportHost('google.com.evil.example'), false);
 
 // Main-frame rule: allowlist OR Google sign-in/challenge, plus internal protocols.
 assert.strictEqual(isAllowedMainFrameUrl('https://arena.ai/', DEFAULT_ALLOWED_SITES), true);

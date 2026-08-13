@@ -43,6 +43,17 @@ const GOOGLE_CHALLENGE_DOMAINS = Object.freeze([
   'recaptcha.net'
 ]);
 
+// Domains whose cookies hold a Google sign-in session (Gmail, Google
+// account, Gemini, NotebookLM, …).  The one-time "Import my accounts" flow
+// copies cookies for these hosts from the user's real browser into
+// DFBrowse's own storage.
+const GOOGLE_IMPORT_DOMAINS = Object.freeze([
+  'google.com',
+  'googleusercontent.com',
+  'gstatic.com',
+  'googleapis.com'
+]);
+
 function normalizeHostname(input) {
   if (typeof input !== 'string') {
     throw new Error('Site must be text.');
@@ -156,6 +167,13 @@ function isGoogleAuthNavigationUrl(url) {
   }
 }
 
+// True when a cookie's domain belongs to a Google sign-in session (the
+// domains listed in GOOGLE_IMPORT_DOMAINS).  Cookie domains may carry a
+// leading dot (domain cookies) — strip it before matching.
+function isGoogleImportHost(hostname) {
+  return hostnameMatchesDomains(String(hostname || '').replace(/^\./, ''), GOOGLE_IMPORT_DOMAINS);
+}
+
 // Full rule for a top-level (main-frame) load inside the study view: the
 // study allowlist, the Google sign-in/challenge carve-out, or Chromium's own
 // internal protocols (about:blank, data:, blob:, chrome-error:, …).
@@ -175,6 +193,7 @@ module.exports = {
   DEFAULT_ALLOWED_SITES,
   GOOGLE_AUTH_DOMAINS,
   GOOGLE_CHALLENGE_DOMAINS,
+  GOOGLE_IMPORT_DOMAINS,
   SAFE_INTERNAL_PROTOCOLS,
   normalizeHostname,
   normalizeAllowedList,
@@ -183,5 +202,6 @@ module.exports = {
   isAllowedRequestUrl,
   isAllowedMainFrameUrl,
   isGoogleAuthUrl,
-  isGoogleAuthNavigationUrl
+  isGoogleAuthNavigationUrl,
+  isGoogleImportHost
 };

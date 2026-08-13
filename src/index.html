@@ -59,6 +59,7 @@
         <button id="forwardBtn" class="nav-btn" title="Forward">→</button>
         <button id="reloadBtn" class="nav-btn" title="Reload">↻</button>
         <button id="homeBtn" class="nav-btn" title="Home">⌂</button>
+        <button id="importBtn" class="nav-btn" title="Import my Google accounts">👤</button>
         <form id="addressForm" class="address-form">
           <input id="addressInput" type="text" autocomplete="off" spellcheck="false" placeholder="Enter an allowed study URL" />
           <button class="go-btn" type="submit">Go</button>
@@ -87,6 +88,13 @@
               Add or remove websites only with the feature password.
             </p>
             <div id="quickLinks" class="quick-links"></div>
+            <div class="import-actions">
+              <button id="importAccountsBtn" class="primary">Import my Google accounts</button>
+              <p class="hint">
+                One-time setup: sign in with all your emails in your real browser, DFBrowse saves them,
+                then sign-in always happens inside DFBrowse.
+              </p>
+            </div>
           </div>
         </div>
         <div id="blockedScreen" class="blocked-screen hidden">
@@ -160,6 +168,34 @@
       </div>
 
       <p id="modalError" class="modal-error" role="alert"></p>
+    </div>
+  </div>
+
+  <div id="importOverlay" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+    <div class="modal import-card">
+      <div class="modal-header">
+        <div>
+          <h2 id="importTitle">Import my Google accounts</h2>
+          <p id="importSubtitle">One-time setup — after this, sign-in happens inside DFBrowse</p>
+        </div>
+        <button id="closeImport" class="icon-btn" aria-label="Close">×</button>
+      </div>
+
+      <ol id="importSteps" class="import-steps">
+        <li data-step="open">Open your browser in import mode</li>
+        <li data-step="signin">Sign in with every email you want to store</li>
+        <li data-step="import">DFBrowse saves your sessions permanently</li>
+      </ol>
+
+      <p id="importStatus" class="import-status" role="status">Starting…</p>
+
+      <div id="importButtons" class="import-buttons">
+        <button id="importFinishBtn" class="primary hidden">Finish &amp; import now</button>
+        <button id="importMoreBtn" class="ghost hidden">Wait — adding another account</button>
+        <button id="importRetryBtn" class="primary hidden">Try again</button>
+        <button id="importCloseBtn" class="primary hidden">Close</button>
+        <button id="importCancelBtn" class="secondary">Cancel</button>
+      </div>
     </div>
   </div>
 

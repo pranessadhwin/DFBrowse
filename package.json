@@ -13,7 +13,9 @@
     "build": "electron-builder --win nsis",
     "build:win": "electron-builder --win nsis"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
   "devDependencies": {
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3",

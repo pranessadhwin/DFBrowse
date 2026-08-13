@@ -29,6 +29,15 @@ contextBridge.exposeInMainWorld('studyBrowser', {
   onBlocked: callback => {
     ipcRenderer.on('browser:blocked', (event, payload) => callback(payload));
   },
+  // One-time Google account import (opens the real browser once, copies the
+  // Google sessions into DFBrowse, then sign-in happens inside DFBrowse).
+  importAccounts: () => ipcRenderer.invoke('import:start'),
+  finishImport: () => ipcRenderer.invoke('import:finishNow'),
+  keepWaitingImport: () => ipcRenderer.invoke('import:keepWaiting'),
+  cancelImport: () => ipcRenderer.invoke('import:cancel'),
+  onImportStatus: callback => {
+    ipcRenderer.on('import:status', (event, payload) => callback(payload));
+  },
   // External URLs (clicked links while DFBrowse is the default browser).
   onOpenUrl: callback => {
     ipcRenderer.on('app:openUrl', (event, url) => callback(url));
